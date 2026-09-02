@@ -1,0 +1,39 @@
+name: Verify Universal Dashboard
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type check
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Verify Canvas date parsing
+        run: pnpm verify-ical-sync
+      - name: Verify Google Calendar import
+        run: pnpm verify-google-import
+      - name: Verify stage-four behavior
+        run: pnpm verify-stage4
+      - name: Build production application
+        run: pnpm build

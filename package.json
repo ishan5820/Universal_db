@@ -1,0 +1,42 @@
+{
+  "name": "universal-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "verify-stage4": "node --import tsx scripts/verify-stage4.ts",
+    "verify-ical-sync": "node --import tsx scripts/verify-ical-sync.ts",
+    "verify-google-import": "node --import tsx scripts/verify-google-import.ts"
+  },
+  "dependencies": {
+    "date-fns": "4.4.0",
+    "fflate": "0.8.3",
+    "ical.js": "2.2.1",
+    "lucide-react": "1.34.0",
+    "next": "16.3.3",
+    "node-ical": "0.27.1",
+    "pdfjs-dist": "6.2.108",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "server-only": "0.0.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "20.19.43",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.3",
+    "tailwindcss": "4.3.3",
+    "tsx": "4.23.12",
+    "typescript": "5.9.3"
+  },
+  "packageManager": "pnpm@11.19.0"
+}
