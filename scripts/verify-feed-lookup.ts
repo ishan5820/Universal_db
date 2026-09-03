@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { createPinnedLookup } from "../lib/pinnedLookup";
+import { CALENDAR_REQUEST_HEADERS, createPinnedLookup } from "../lib/calendarRequest";
 
 const lookup = createPinnedLookup("203.0.113.10", 4);
 
 async function main() {
+  assert.match(CALENDAR_REQUEST_HEADERS["user-agent"], /^Mozilla\/5\.0 .*UniversalDashboard/);
+  assert.equal(CALENDAR_REQUEST_HEADERS["accept-encoding"], "identity");
+
   await new Promise<void>((resolve, reject) => {
     lookup("calendar.example", { all: true }, (error, addresses, family) => {
       if (error) return reject(error);

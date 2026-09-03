@@ -3,8 +3,8 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { NextResponse } from "next/server";
+import { CALENDAR_REQUEST_HEADERS, createPinnedLookup } from "@/lib/calendarRequest";
 import { parseCalendar } from "@/lib/icalSync";
-import { createPinnedLookup } from "@/lib/pinnedLookup";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -99,7 +99,7 @@ function requestCalendar(target: ValidatedTarget): Promise<CalendarResponse> {
   return new Promise((resolve, reject) => {
     const request = (target.url.protocol === "https:" ? httpsRequest : httpRequest)(target.url, {
       method: "GET",
-      headers: { accept: "text/calendar,text/plain;q=0.9,*/*;q=0.1", "accept-encoding": "identity" },
+      headers: CALENDAR_REQUEST_HEADERS,
       lookup: createPinnedLookup(target.address, target.family),
     }, (response) => {
       const status = response.statusCode ?? 502;
