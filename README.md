@@ -50,6 +50,7 @@ Run all required checks before deployment:
 pnpm typecheck
 pnpm lint
 pnpm verify-ical-sync
+pnpm verify-feed-lookup
 pnpm verify-google-import
 pnpm verify-stage4
 pnpm build

@@ -31,6 +31,8 @@ jobs:
         run: pnpm lint
       - name: Verify Canvas date parsing
         run: pnpm verify-ical-sync
+      - name: Verify calendar feed networking
+        run: pnpm verify-feed-lookup
       - name: Verify Google Calendar import
         run: pnpm verify-google-import
       - name: Verify stage-four behavior

@@ -4,6 +4,7 @@ import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { NextResponse } from "next/server";
 import { parseCalendar } from "@/lib/icalSync";
+import { createPinnedLookup } from "@/lib/pinnedLookup";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -99,7 +100,7 @@ function requestCalendar(target: ValidatedTarget): Promise<CalendarResponse> {
     const request = (target.url.protocol === "https:" ? httpsRequest : httpRequest)(target.url, {
       method: "GET",
       headers: { accept: "text/calendar,text/plain;q=0.9,*/*;q=0.1", "accept-encoding": "identity" },
-      lookup: (_hostname, _options, callback) => callback(null, target.address, target.family),
+      lookup: createPinnedLookup(target.address, target.family),
     }, (response) => {
       const status = response.statusCode ?? 502;
       const locationHeader = response.headers.location;

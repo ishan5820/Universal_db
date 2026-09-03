@@ -12,6 +12,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "verify-stage4": "node --import tsx scripts/verify-stage4.ts",
+    "verify-feed-lookup": "node --import tsx scripts/verify-feed-lookup.ts",
     "verify-ical-sync": "node --import tsx scripts/verify-ical-sync.ts",
     "verify-google-import": "node --import tsx scripts/verify-google-import.ts"
   },
