@@ -79,6 +79,7 @@ export function SportsSchedule({ teams }: { teams: TexasSportsTeam[] }) {
       is_completed: false,
       source: "manual",
       kind: "event",
+      color_shade: 3,
       end_time: null,
       series_id: null,
       recurrence_rule: null,

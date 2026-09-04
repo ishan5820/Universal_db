@@ -135,6 +135,7 @@ export function GoogleCalendarImporter({ open, onClose }: GoogleCalendarImporter
         is_completed: false,
         source: "ical",
         kind: "event",
+        color_shade: 3,
         end_time: row.endTime,
         series_id: row.recurrenceRule ? `google-series:${row.uid.split("::")[0]}` : null,
         recurrence_rule: row.recurrenceRule,

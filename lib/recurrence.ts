@@ -35,6 +35,7 @@ export function expandSeries(spec: RecurrenceSpec, seriesId: string): NewTask[] 
       is_completed: false,
       source: "manual",
       kind: spec.kind,
+      color_shade: spec.colorShade,
       end_time: spec.kind === "event" ? spec.endTime : null,
       series_id: seriesId,
       recurrence_rule: recurrenceRule,

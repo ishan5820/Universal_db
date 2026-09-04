@@ -1,7 +1,7 @@
 {
   "name": "Universal Dashboard",
   "short_name": "Universal",
-  "description": "A private, device-first calendar for coursework, organizations, and campus life.",
+  "description": "A private, local-first calendar with optional account-based cloud backup.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

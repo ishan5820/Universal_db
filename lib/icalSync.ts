@@ -54,6 +54,7 @@ function toIncoming(event: VEvent, uid: string, start: DateWithTimeZone | undefi
     is_completed: false,
     source: "ical",
     kind: recurringTimed ? "event" : "task",
+    color_shade: 3,
     end_time: recurringTimed && end ? toLocalTimeString(end) : null,
     series_id: null,
     recurrence_rule: event.rrule?.toString() ?? null,

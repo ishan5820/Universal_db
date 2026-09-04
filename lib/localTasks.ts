@@ -5,6 +5,7 @@ import { expandSeries } from "@/lib/recurrence";
 import {
   isTaskCategory,
   isTaskKind,
+  isTaskShade,
   isTaskSource,
   isWeekday,
   type NewTask,
@@ -25,7 +26,11 @@ export type TaskListActionResult =
   | { ok: true; tasks: Task[]; count: number }
   | { ok: false; error: string };
 
-type StoredState = { version: 1; tasks: Task[] };
+export type TaskMergeActionResult =
+  | { ok: true; tasks: Task[]; inserted: Task[]; updated: Task[]; unchanged: number; count: number }
+  | { ok: false; error: string };
+
+type StoredState = { version: 1; tasks: Task[]; updated_at?: string | null };
 
 const DATABASE_NAME = "universal-dashboard-local";
 const DATABASE_VERSION = 1;
@@ -34,6 +39,7 @@ const STATE_KEY = "tasks";
 const FALLBACK_KEY = "universal-dashboard-local-state-v1";
 const CHANGE_EVENT = "universal-dashboard:tasks-changed";
 const CHANGE_CHANNEL = "universal-dashboard-task-changes";
+const STORAGE_LOCK = "universal-dashboard-storage-write";
 const MAX_TASKS = 10_000;
 
 let mutationQueue: Promise<unknown> = Promise.resolve();
@@ -109,6 +115,7 @@ function sanitizeNewTask(value: unknown): NewTask | string {
     is_completed: isCompleted,
     source,
     kind,
+    color_shade: isTaskShade(input.color_shade) ? input.color_shade : 3,
     end_time: kind === "event" ? cleanText(input.end_time) : null,
     series_id: cleanText(input.series_id),
     recurrence_rule: cleanText(input.recurrence_rule),
@@ -126,7 +133,7 @@ function sanitizePatch(value: unknown, existing: Task): TaskUpdate | string {
   const allowed = new Set<keyof NewTask>([
     "title", "description", "due_date", "due_time", "location", "category", "course_code", "is_pinned",
     "is_completed", "source", "kind", "end_time", "series_id", "recurrence_rule", "series_until",
-    "import_batch_id", "subtasks", "canvas_uid",
+    "import_batch_id", "subtasks", "canvas_uid", "color_shade",
   ]);
   return Object.fromEntries(
     Object.keys(input)
@@ -171,7 +178,20 @@ function normalizeState(value: unknown): StoredState {
     if (task.canvas_uid) canvasUids.add(task.canvas_uid);
     tasks.push(task);
   }
-  return { version: 1, tasks };
+  const updatedAt = value && typeof value === "object" && typeof (value as { updated_at?: unknown }).updated_at === "string"
+    && !Number.isNaN(Date.parse((value as { updated_at: string }).updated_at))
+    ? (value as { updated_at: string }).updated_at
+    : null;
+  return { version: 1, tasks, updated_at: updatedAt };
+}
+
+function freshestState(indexed: StoredState, fallback: StoredState): StoredState {
+  if (indexed.updated_at && fallback.updated_at) {
+    return indexed.updated_at >= fallback.updated_at ? indexed : fallback;
+  }
+  if (indexed.updated_at) return indexed;
+  if (fallback.updated_at) return fallback;
+  return indexed.tasks.length > 0 ? indexed : fallback;
 }
 
 function sortTasks(tasks: Task[]): Task[] {
@@ -229,30 +249,30 @@ async function writeIndexedState(state: StoredState): Promise<void> {
 
 function readFallbackState(): StoredState {
   const saved = window.localStorage.getItem(FALLBACK_KEY);
-  if (!saved) return { version: 1, tasks: [] };
+  if (!saved) return { version: 1, tasks: [], updated_at: null };
   try {
     return normalizeState(JSON.parse(saved));
   } catch {
-    return { version: 1, tasks: [] };
+    return { version: 1, tasks: [], updated_at: null };
   }
 }
 
 async function readState(): Promise<StoredState> {
-  if (typeof window === "undefined" || typeof indexedDB === "undefined") {
+  if (typeof window === "undefined") {
     throw new Error("Local calendar storage is only available in your browser.");
   }
+  if (typeof indexedDB === "undefined") return readFallbackState();
   try {
     const indexed = await readIndexedState();
-    if (indexed.tasks.length > 0) return indexed;
     const fallback = readFallbackState();
-    return fallback.tasks.length > 0 ? fallback : indexed;
+    return freshestState(indexed, fallback);
   } catch {
     return readFallbackState();
   }
 }
 
 async function writeState(state: StoredState): Promise<void> {
-  const normalized = normalizeState(state);
+  const normalized = { ...normalizeState(state), updated_at: new Date().toISOString() } satisfies StoredState;
   let indexedError: unknown = null;
   try {
     await writeIndexedState(normalized);
@@ -295,9 +315,15 @@ export function subscribeTaskChanges(listener: () => void): () => void {
 }
 
 function enqueue<T>(operation: () => Promise<T>): Promise<T> {
-  const result = mutationQueue.then(operation, operation);
-  mutationQueue = result.then(() => undefined, () => undefined);
-  return result;
+  const serializeInTab = () => {
+    const result = mutationQueue.then(operation, operation);
+    mutationQueue = result.then(() => undefined, () => undefined);
+    return result;
+  };
+  if (typeof navigator !== "undefined" && navigator.locks) {
+    return navigator.locks.request<Promise<T>>(STORAGE_LOCK, serializeInTab) as unknown as Promise<T>;
+  }
+  return serializeInTab();
 }
 
 function createTaskRow(row: NewTask): Task {
@@ -318,6 +344,118 @@ export async function getAllTasks(): Promise<TaskListActionResult> {
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Could not load organizer data." };
   }
+}
+
+export function validateBackupTasks(input: unknown[]): TaskListActionResult {
+  if (!Array.isArray(input)) return { ok: false, error: "The backup calendar item list is invalid." };
+  if (input.length > MAX_TASKS) {
+    return { ok: false, error: `A backup can contain at most ${MAX_TASKS.toLocaleString()} calendar items.` };
+  }
+  const normalized = normalizeState({ version: 1, tasks: input });
+  if (normalized.tasks.length !== input.length) {
+    return { ok: false, error: "One or more backup rows are invalid or duplicated." };
+  }
+  const tasks = sortTasks(normalized.tasks);
+  return { ok: true, tasks, count: tasks.length };
+}
+
+function backupIdentity(task: Task): string {
+  return [
+    task.kind,
+    task.category,
+    task.title.trim().toLocaleLowerCase(),
+    task.due_date ?? "",
+    task.due_time ?? "",
+    task.end_time ?? "",
+    task.course_code?.trim().toLocaleUpperCase() ?? "",
+    task.series_id ?? "",
+  ].join("\u001f");
+}
+
+export function mergeTasksFromBackup(input: unknown[]): Promise<TaskMergeActionResult> {
+  return enqueue(async () => {
+    try {
+      const checked = validateBackupTasks(input);
+      if (!checked.ok) return checked;
+      const state = await readState();
+      const tasks = [...state.tasks];
+
+      const byId = new Map<string, number>();
+      const byCanvasUid = new Map<string, number>();
+      const byIdentity = new Map<string, number>();
+      const remember = (task: Task, index: number) => {
+        byId.set(task.id, index);
+        if (task.canvas_uid) byCanvasUid.set(task.canvas_uid, index);
+        if (!byIdentity.has(backupIdentity(task))) byIdentity.set(backupIdentity(task), index);
+      };
+      const forget = (task: Task, index: number) => {
+        if (byId.get(task.id) === index) byId.delete(task.id);
+        if (task.canvas_uid && byCanvasUid.get(task.canvas_uid) === index) byCanvasUid.delete(task.canvas_uid);
+        if (byIdentity.get(backupIdentity(task)) === index) byIdentity.delete(backupIdentity(task));
+      };
+      tasks.forEach(remember);
+
+      const inserted: Task[] = [];
+      const updated: Task[] = [];
+      let unchanged = 0;
+      for (const incoming of checked.tasks) {
+        const idIndex = byId.get(incoming.id);
+        const canvasIndex = incoming.canvas_uid ? byCanvasUid.get(incoming.canvas_uid) : undefined;
+        if (idIndex !== undefined && canvasIndex !== undefined && idIndex !== canvasIndex) {
+          return { ok: false, error: `The backup contains a conflicting calendar identifier for “${incoming.title}”.` };
+        }
+        const index = idIndex ?? canvasIndex ?? byIdentity.get(backupIdentity(incoming));
+        if (index === undefined) {
+          if (tasks.length >= MAX_TASKS) {
+            return { ok: false, error: `This calendar has reached its ${MAX_TASKS.toLocaleString()}-item safety limit.` };
+          }
+          tasks.push(incoming);
+          inserted.push(incoming);
+          remember(incoming, tasks.length - 1);
+          continue;
+        }
+
+        const existing = tasks[index];
+        if (Date.parse(incoming.updated_at) <= Date.parse(existing.updated_at)) {
+          unchanged += 1;
+          continue;
+        }
+        const replacement = incoming.id === existing.id
+          ? incoming
+          : { ...incoming, id: existing.id, created_at: existing.created_at };
+        forget(existing, index);
+        tasks[index] = replacement;
+        remember(replacement, index);
+        updated.push(replacement);
+      }
+
+      await writeState({ version: 1, tasks });
+      announceChange();
+      return { ok: true, tasks: sortTasks(tasks), inserted, updated, unchanged, count: tasks.length };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not restore the calendar backup." };
+    }
+  });
+}
+
+export function replaceTasksFromCloud(input: Task[]): Promise<TaskListActionResult> {
+  return enqueue(async () => {
+    try {
+      if (!Array.isArray(input) || input.length > MAX_TASKS) {
+        return { ok: false, error: `Cloud calendar data exceeds the ${MAX_TASKS.toLocaleString()}-item safety limit.` };
+      }
+      const normalized = normalizeState({ version: 1, tasks: input });
+      if (normalized.tasks.length !== input.length) {
+        return { ok: false, error: "Cloud calendar data failed local validation." };
+      }
+      await writeState(normalized);
+      announceChange();
+      const tasks = sortTasks(normalized.tasks);
+      return { ok: true, tasks, count: tasks.length };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not save cloud calendar data locally." };
+    }
+  });
 }
 
 export function createTask(input: TaskDraft): Promise<TaskActionResult> {
@@ -516,6 +654,7 @@ function validateRecurrenceSpec(value: RecurrenceSpec): string | null {
   if (!isTaskCategory(value.category) || !isTaskKind(value.kind)) return "Recurring item settings are invalid.";
   if (!isCalendarDate(value.startDate) || !isCalendarDate(value.untilDate)) return "Start and end dates are required.";
   if (!Array.isArray(value.byDay) || !value.byDay.every(isWeekday)) return "Choose valid weekdays.";
+  if (!isTaskShade(value.colorShade)) return "Choose a valid color shade.";
   return null;
 }
 
@@ -597,6 +736,7 @@ export function extendSeries(seriesId: string, newUntil: string): Promise<TaskAc
         category: sample.category,
         courseCode: sample.course_code,
         kind: sample.kind,
+        colorShade: sample.color_shade,
         byDay,
         startDate: addCalendarDays(previousUntil, 1),
         untilDate: newUntil,

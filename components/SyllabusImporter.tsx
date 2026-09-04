@@ -3,14 +3,16 @@
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, DatabaseBackup, FileJson, FileText, FileUp, RotateCcw, X } from "lucide-react";
 import {
-  bulkCreateTasks, deleteImportBatch, getAllTasks, updateTask, type TaskDraft,
+  bulkCreateTasks, deleteImportBatch, getAllTasks, mergeTasksFromBackup, updateTask, validateBackupTasks,
 } from "@/lib/localTasks";
+import { parseBackupDocument } from "@/lib/backup";
 import { CATEGORY_ORDER, CATEGORY_STYLES } from "@/lib/categories";
-import { fromTimeInputValue, isCalendarDate, toTimeInputValue } from "@/lib/datetime";
+import { fromTimeInputValue, toTimeInputValue } from "@/lib/datetime";
 import { findMatch, type MatchResult } from "@/lib/matchTasks";
 import { extractPdfText } from "@/lib/extractPdfText";
 import { parseSyllabus } from "@/lib/parseSyllabus";
-import { isTaskCategory, isTaskKind, isTaskSource, type Task, type TaskCategory } from "@/types/task";
+import { applyLocalPreferences, type LocalPreferences } from "@/lib/preferences";
+import type { Task, TaskCategory } from "@/types/task";
 
 interface PreviewRow {
   key: string;
@@ -29,6 +31,9 @@ interface ImportSummary {
   updated: number;
   failed: string[];
   batchId: string | null;
+  unchanged?: number;
+  restoredPreferences?: boolean;
+  restore?: boolean;
   undone?: number;
 }
 
@@ -45,54 +50,14 @@ function taskCandidate(row: Pick<PreviewRow, "title" | "dueDate" | "category">) 
   return { title: row.title, due_date: row.dueDate, category: row.category, course_code: null, kind: "task" as const };
 }
 
-function jsonTask(value: unknown, fallbackCategory: TaskCategory): TaskDraft | null {
-  if (!value || typeof value !== "object") return null;
-  const row = value as Record<string, unknown>;
-  if (typeof row.title !== "string" || !row.title.trim()) return null;
-  const category = isTaskCategory(row.category) ? row.category : fallbackCategory;
-  const kind = isTaskKind(row.kind) ? row.kind : "task";
-  const source = isTaskSource(row.source) ? row.source : "manual";
-  const dueDate = typeof row.due_date === "string" && isCalendarDate(row.due_date) ? row.due_date : null;
-  const seriesUntil = typeof row.series_until === "string" && isCalendarDate(row.series_until) ? row.series_until : null;
-  const subtasks = Array.isArray(row.subtasks) ? row.subtasks.flatMap((value) => {
-    if (!value || typeof value !== "object") return [];
-    const subtask = value as Record<string, unknown>;
-    if (typeof subtask.title !== "string" || !subtask.title.trim()) return [];
-    return [{
-      id: typeof subtask.id === "string" ? subtask.id : crypto.randomUUID(),
-      title: subtask.title.trim(),
-      is_completed: Boolean(subtask.is_completed),
-      created_at: typeof subtask.created_at === "string" ? subtask.created_at : new Date().toISOString(),
-    }];
-  }) : [];
-  return {
-    title: row.title.trim(),
-    description: typeof row.description === "string" ? row.description : null,
-    due_date: dueDate,
-    due_time: typeof row.due_time === "string" ? row.due_time : null,
-    location: typeof row.location === "string" ? row.location : null,
-    category,
-    course_code: typeof row.course_code === "string" ? row.course_code : null,
-    is_pinned: Boolean(row.is_pinned),
-    is_completed: kind === "event" ? false : Boolean(row.is_completed),
-    source,
-    kind,
-    canvas_uid: typeof row.canvas_uid === "string" ? row.canvas_uid : null,
-    end_time: kind === "event" && typeof row.end_time === "string" ? row.end_time : null,
-    series_id: typeof row.series_id === "string" ? row.series_id : null,
-    recurrence_rule: typeof row.recurrence_rule === "string" ? row.recurrence_rule : null,
-    series_until: seriesUntil,
-    import_batch_id: null,
-    subtasks,
-  };
-}
-
 export function SyllabusImporter({ open, onClose, initialCategory = "classes", existingTasks = [], onImported, onUndone }: SyllabusImporterProps) {
   const [tab, setTab] = useState<"syllabus" | "backup">("syllabus");
   const [sourceText, setSourceText] = useState("");
   const [pdfName, setPdfName] = useState<string | null>(null);
   const [rows, setRows] = useState<PreviewRow[]>([]);
-  const [jsonRows, setJsonRows] = useState<TaskDraft[]>([]);
+  const [jsonRows, setJsonRows] = useState<Task[]>([]);
+  const [jsonPreferences, setJsonPreferences] = useState<LocalPreferences | null>(null);
+  const [jsonLegacy, setJsonLegacy] = useState(false);
   const [jsonName, setJsonName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -165,6 +130,7 @@ export function SyllabusImporter({ open, onClose, initialCategory = "classes", e
         due_time: row.dueTime, category: row.category, course_code: null,
         location: null,
         is_pinned: false, is_completed: false, source: "manual", kind: "task",
+        color_shade: 3,
         canvas_uid: null, end_time: null, series_id: null, recurrence_rule: null,
         series_until: null, import_batch_id: batchId,
       })));
@@ -191,28 +157,39 @@ export function SyllabusImporter({ open, onClose, initialCategory = "classes", e
 
   const loadJson = async (file: File | undefined) => {
     if (!file) return;
-    setError(null); setSummary(null); setJsonRows([]); setJsonName(file.name);
+    setError(null); setSummary(null); setJsonRows([]); setJsonPreferences(null); setJsonLegacy(false); setJsonName(file.name);
     try {
       const parsed = JSON.parse(await file.text()) as unknown;
-      if (!Array.isArray(parsed)) throw new Error("Backup JSON must contain an array of organizer rows.");
-      const restored = parsed.map((row) => jsonTask(row, initialCategory)).filter((row): row is TaskDraft => Boolean(row));
-      if (!restored.length) throw new Error("No valid organizer rows were found in this file.");
-      if (restored.length > 500) throw new Error("A single restore can contain at most 500 rows.");
-      setJsonRows(restored);
+      const backup = parseBackupDocument(parsed);
+      const checked = validateBackupTasks(backup.tasks);
+      if (!checked.ok) throw new Error(checked.error);
+      if (checked.count === 0 && !backup.preferences) throw new Error("This legacy backup does not contain any calendar items.");
+      setJsonRows(checked.tasks);
+      setJsonPreferences(backup.preferences);
+      setJsonLegacy(backup.isLegacy);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Could not read this JSON file."); }
   };
 
   const restoreJson = async () => {
-    if (!jsonRows.length) return;
+    if (!jsonRows.length && !jsonPreferences) return;
     setBusy(true); setError(null); setSummary(null);
-    const batchId = crypto.randomUUID();
-    const result = await bulkCreateTasks(jsonRows.map((row) => ({ ...row, import_batch_id: batchId })));
+    const result = await mergeTasksFromBackup(jsonRows);
     setBusy(false);
     if (!result.ok) { setError(result.error); return; }
-    const created = result.tasks ?? [result.task];
-    setSummary({ inserted: created.length, updated: 0, failed: [], batchId });
+    if (jsonPreferences) applyLocalPreferences(jsonPreferences);
+    setSummary({
+      inserted: result.inserted.length,
+      updated: result.updated.length,
+      unchanged: result.unchanged,
+      restoredPreferences: Boolean(jsonPreferences),
+      failed: [],
+      batchId: null,
+      restore: true,
+    });
     setJsonRows([]);
-    onImported?.(created, []);
+    setJsonPreferences(null);
+    setJsonLegacy(false);
+    onImported?.(result.inserted, result.updated);
   };
 
   const undoImport = async () => {
@@ -234,7 +211,7 @@ export function SyllabusImporter({ open, onClose, initialCategory = "classes", e
         <div className="px-5 pt-5 sm:px-7"><div className="grid grid-cols-2 rounded-2xl bg-slate-100 p-1" aria-label="Import type"><button type="button" onClick={() => { setTab("syllabus"); setError(null); }} className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-bold ${tab === "syllabus" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"}`}><FileText className="h-4 w-4" />Syllabus text</button><button type="button" onClick={() => { setTab("backup"); setError(null); }} className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-bold ${tab === "backup" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"}`}><FileJson className="h-4 w-4" />JSON backup</button></div></div>
 
         <div className="p-5 sm:p-7">
-          {summary && <section className={`mb-5 rounded-2xl p-4 ${summary.failed.length ? "bg-amber-50 text-amber-950" : "bg-emerald-50 text-emerald-950"}`}><div className="flex items-start gap-3">{summary.failed.length ? <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" /> : <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />}<div className="min-w-0 flex-1"><p className="font-bold">{summary.undone ? `Removed ${summary.undone} imported rows.` : `${summary.inserted} inserted · ${summary.updated} descriptions updated · ${summary.failed.length} failed`}</p>{summary.failed.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">{summary.failed.map((failure) => <li key={failure}>{failure}</li>)}</ul>}{summary.batchId && <div className="mt-3">{confirmUndo ? <div className="flex flex-wrap items-center gap-2 text-xs"><span className="font-semibold">Remove all {summary.inserted} rows from this import?</span><button type="button" onClick={() => void undoImport()} className="rounded-lg bg-rose-600 px-2.5 py-1.5 font-bold text-white">Undo import</button><button type="button" onClick={() => setConfirmUndo(false)} className="font-bold text-slate-600">Cancel</button></div> : <button type="button" onClick={() => setConfirmUndo(true)} className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-bold shadow-sm ring-1 ring-emerald-200"><RotateCcw className="h-3.5 w-3.5" />Undo this import</button>}</div>}</div></div></section>}
+          {summary && <section className={`mb-5 rounded-2xl p-4 ${summary.failed.length ? "bg-amber-50 text-amber-950" : "bg-emerald-50 text-emerald-950"}`}><div className="flex items-start gap-3">{summary.failed.length ? <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" /> : <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />}<div className="min-w-0 flex-1"><p className="font-bold">{summary.undone ? `Removed ${summary.undone} imported rows.` : summary.restore ? `${summary.inserted} added · ${summary.updated} updated · ${summary.unchanged ?? 0} already present${summary.restoredPreferences ? " · preferences restored" : ""}` : `${summary.inserted} inserted · ${summary.updated} descriptions updated · ${summary.failed.length} failed`}</p>{summary.failed.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">{summary.failed.map((failure) => <li key={failure}>{failure}</li>)}</ul>}{summary.batchId && <div className="mt-3">{confirmUndo ? <div className="flex flex-wrap items-center gap-2 text-xs"><span className="font-semibold">Remove all {summary.inserted} rows from this import?</span><button type="button" onClick={() => void undoImport()} className="rounded-lg bg-rose-600 px-2.5 py-1.5 font-bold text-white">Undo import</button><button type="button" onClick={() => setConfirmUndo(false)} className="font-bold text-slate-600">Cancel</button></div> : <button type="button" onClick={() => setConfirmUndo(true)} className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-bold shadow-sm ring-1 ring-emerald-200"><RotateCcw className="h-3.5 w-3.5" />Undo this import</button>}</div>}</div></div></section>}
           {error && <p role="alert" className="mb-5 rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</p>}
 
           {tab === "syllabus" ? <>
@@ -246,7 +223,7 @@ export function SyllabusImporter({ open, onClose, initialCategory = "classes", e
             </section>
 
             {rows.length > 0 && <section className="mt-5"><div className="mb-3 flex items-center justify-between"><div><h3 className="text-lg font-bold text-slate-950">Editable preview</h3><p className="text-xs text-slate-500">Canvas matches stay excluded unless you choose description-only.</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">{rows.filter((row) => row.include).length} selected</span></div><div className="overflow-x-auto rounded-2xl border border-slate-200"><table className="w-full min-w-[980px] text-left text-sm"><thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500"><tr><th className="px-3 py-3">Include</th><th className="px-3 py-3">Title</th><th className="px-3 py-3">Date</th><th className="px-3 py-3">Time</th><th className="px-3 py-3">Category</th><th className="px-3 py-3">Review</th></tr></thead><tbody>{rows.map((row) => <tr key={row.key} className="border-t border-slate-100 align-top"><td className="px-3 py-3"><input type="checkbox" checked={row.include} onChange={(event) => updateRow(row.key, { include: event.target.checked })} aria-label={`Include ${row.title}`} className="h-4 w-4 accent-emerald-600" /></td><td className="px-3 py-3"><input value={row.title} onChange={(event) => updateRow(row.key, { title: event.target.value })} aria-label={`Title for ${row.title}`} className="w-full min-w-56 rounded-lg border border-slate-200 px-2.5 py-2" /></td><td className="px-3 py-3"><input type="date" value={row.dueDate ?? ""} onChange={(event) => updateRow(row.key, { dueDate: event.target.value || null })} aria-label={`Date for ${row.title}`} className="rounded-lg border border-slate-200 px-2.5 py-2" /></td><td className="px-3 py-3"><input type="time" value={toTimeInputValue(row.dueTime)} onChange={(event) => updateRow(row.key, { dueTime: fromTimeInputValue(event.target.value) })} aria-label={`Time for ${row.title}`} className="rounded-lg border border-slate-200 px-2.5 py-2" /></td><td className="px-3 py-3"><select value={row.category} onChange={(event) => updateRow(row.key, { category: event.target.value as TaskCategory })} aria-label={`Category for ${row.title}`} className="rounded-lg border border-slate-200 px-2.5 py-2">{CATEGORY_ORDER.map((category) => <option key={category} value={category}>{CATEGORY_STYLES[category].label}</option>)}</select></td><td className="w-64 px-3 py-3">{row.match?.confidence === "high" ? <div><span className="inline-flex rounded-full bg-orange-50 px-2 py-1 text-[11px] font-bold text-orange-700">Already in Canvas</span><p className="mt-1 text-xs text-slate-500">Parsed {row.dueDate ?? "no date"} · Existing {row.match.row.due_date ?? "no date"}</p><select value={row.duplicateMode} onChange={(event) => { const mode = event.target.value as "skip" | "description"; updateRow(row.key, { duplicateMode: mode, include: mode === "description" }); }} aria-label={`Duplicate action for ${row.title}`} className="mt-2 w-full rounded-lg border border-orange-200 bg-white px-2 py-1.5 text-xs"><option value="skip">Skip Canvas match</option><option value="description">Update description only</option></select></div> : row.match?.confidence === "low" ? <div><span className="inline-flex rounded-full bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-700">Possible duplicate</span><p className="mt-1 text-xs text-slate-500">Similar to “{row.match.row.title}”</p></div> : row.parseConfidence === "low" ? <span className="inline-flex rounded-full bg-rose-50 px-2 py-1 text-[11px] font-bold text-rose-700">Check date</span> : <span className="inline-flex rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">Ready</span>}</td></tr>)}</tbody></table></div><div className="mt-4 flex justify-end"><button type="button" onClick={() => void importPreview()} disabled={busy || !rows.some((row) => row.include)} className="rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-45">{busy ? "Importing…" : `Import ${rows.filter((row) => row.include).length} selected`}</button></div></section>}
-          </> : <section className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center"><DatabaseBackup className="mx-auto h-10 w-10 text-slate-400" /><h3 className="mt-3 text-lg font-bold text-slate-950">Restore a JSON backup</h3><p className="mx-auto mt-1 max-w-lg text-sm leading-6 text-slate-500">Choose a file created by Export data. You will see the row count before restoring it.</p><label className="mt-5 inline-flex cursor-pointer rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-300"><input type="file" accept="application/json,.json" onChange={(event) => void loadJson(event.target.files?.[0])} className="sr-only" />Choose JSON file</label>{jsonName && <p className="mt-3 text-sm font-semibold text-slate-700">{jsonName} · {jsonRows.length} valid rows</p>}{jsonRows.length > 0 && <button type="button" onClick={() => void restoreJson()} disabled={busy} className="mt-4 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-45">{busy ? "Restoring…" : `Restore ${jsonRows.length} rows`}</button>}</section>}
+          </> : <section className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center"><DatabaseBackup className="mx-auto h-10 w-10 text-slate-400" /><h3 className="mt-3 text-lg font-bold text-slate-950">Restore a JSON backup</h3><p className="mx-auto mt-1 max-w-lg text-sm leading-6 text-slate-500">Choose a file created by Export data. Restoring safely merges it with this calendar; it does not erase newer items.</p><label className="mt-5 inline-flex cursor-pointer rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-300"><input type="file" accept="application/json,.json" onChange={(event) => void loadJson(event.target.files?.[0])} className="sr-only" />Choose JSON file</label>{jsonName && <div className="mt-3 text-sm font-semibold text-slate-700"><p>{jsonName} · {jsonRows.length} calendar items</p><p className="mt-1 text-xs font-medium text-slate-500">{jsonPreferences ? "Includes calendar colors and saved views" : jsonLegacy ? "Legacy backup · calendar items only" : "Calendar items only"}</p></div>}{(jsonRows.length > 0 || jsonPreferences) && <button type="button" onClick={() => void restoreJson()} disabled={busy} className="mt-4 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-45">{busy ? "Restoring…" : "Merge backup into dashboard"}</button>}</section>}
         </div>
       </div>
     </div>

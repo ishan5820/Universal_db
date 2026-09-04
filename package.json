@@ -14,9 +14,14 @@
     "verify-stage4": "node --import tsx scripts/verify-stage4.ts",
     "verify-feed-lookup": "node --import tsx scripts/verify-feed-lookup.ts",
     "verify-ical-sync": "node --import tsx scripts/verify-ical-sync.ts",
-    "verify-google-import": "node --import tsx scripts/verify-google-import.ts"
+    "verify-google-import": "node --import tsx scripts/verify-google-import.ts",
+    "verify-cloud-sync": "node --import tsx scripts/verify-cloud-sync.ts",
+    "verify-backup": "node --import tsx scripts/verify-backup.ts",
+    "verify-release": "node --env-file=.env.local --import tsx scripts/verify-release-readiness.ts"
   },
   "dependencies": {
+    "@supabase/ssr": "0.12.5",
+    "@supabase/supabase-js": "2.115.0",
     "date-fns": "4.4.0",
     "fflate": "0.8.3",
     "ical.js": "2.2.1",
