@@ -43,7 +43,7 @@ export function Sidebar() {
 
   return (
     <>
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-slate-200 bg-white px-4 py-5 md:flex">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col overflow-y-auto border-r border-slate-200 bg-white px-4 py-5 md:flex">
         <Link href="/" className="flex items-center gap-3 rounded-2xl px-2 py-2" aria-label="Universal Dashboard home">
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-950 text-white shadow-sm"><CalendarDays className="h-5 w-5" /></span>
           <span><span className="block text-sm font-bold tracking-tight text-slate-950">Universal Dashboard</span><span className="block text-xs text-slate-500">Your calendar, your device</span></span>

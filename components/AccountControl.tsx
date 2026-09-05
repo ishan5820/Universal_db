@@ -76,10 +76,7 @@ export function AccountControl({ mobile = false }: { mobile?: boolean }) {
     <div className={`rounded-2xl border border-slate-200 bg-white ${mobile ? "p-4" : "p-3"}`}>
       <div className="flex items-start gap-3">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600"><Cloud className="h-4 w-4" /></span>
-        <span>
-          <span className="block text-xs font-bold text-slate-900">Use it across devices</span>
-          <span className="mt-0.5 block text-[11px] leading-4 text-slate-500">Sign in to back up and use your calendar across devices.</span>
-        </span>
+        <span className="self-center text-xs font-bold text-slate-900">Use it across devices</span>
       </div>
       <button type="button" onClick={() => void signInWithGoogle()} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-3 py-2.5 text-xs font-bold text-white hover:bg-slate-800">
         <LogIn className="h-4 w-4" /> Sign in with Google
