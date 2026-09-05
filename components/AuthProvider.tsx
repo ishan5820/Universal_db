@@ -25,14 +25,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let active = true;
 
-    void supabase.auth.getUser().then(({ data, error: getUserError }) => {
+    void (async () => {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       if (!active) return;
-      setUser(data.user);
-      setStatus(data.user ? "signed_in" : "signed_out");
-      if (getUserError && getUserError.name !== "AuthSessionMissingError") {
-        setError("We could not verify your sign-in. Please try again.");
+      const savedUser = sessionData.session?.user ?? null;
+      setUser(savedUser);
+      setStatus(savedUser ? "signed_in" : "signed_out");
+
+      if (!savedUser) {
+        if (sessionError && sessionError.name !== "AuthSessionMissingError") {
+          setError("We could not restore your sign-in. Please try again.");
+        }
+        return;
       }
-    });
+
+      const { data: verifiedData, error: verificationError } = await supabase.auth.getUser();
+      if (!active) return;
+      if (verifiedData.user) {
+        setUser(verifiedData.user);
+        setStatus("signed_in");
+        setError(null);
+      } else if (verificationError?.name === "AuthSessionMissingError") {
+        setUser(null);
+        setStatus("signed_out");
+      }
+    })();
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
       if (!active) return;
