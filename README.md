@@ -8,6 +8,8 @@ Calendar data is saved locally first using IndexedDB, with a localStorage fallba
 
 Signed-in users can recover their cloud-backed calendar after clearing browser site data by signing in again. **Backup details** shows the latest successful cloud backup, the local item count, and a manual retry control. Signed-out users should download JSON backups regularly with **Export data** and restore them through **Classes → Import syllabus → JSON backup**.
 
+Google sessions persist in secure browser cookies and refresh automatically, so closing and reopening a tab does not sign the user out. Explicit sign-out clears the current browser session.
+
 JSON backups are versioned and include every category, task, event, subtask, calendar color, calendar view, and category workspace view. Restoring merges by stable item identity, keeps newer local changes, and does not erase the existing calendar. Legacy task-array backups remain supported.
 
 Supabase provides authentication and the RLS-protected cloud schema. Every query is additionally checked against the signed-in user ID by Postgres Row Level Security. Deletes are synchronized as recoverable tombstones rather than hard-deleting rows from browser clients. The publishable key is safe for the browser because it cannot bypass RLS. The Supabase secret key and database URL are server-only and must never be prefixed with `NEXT_PUBLIC_` or exposed to browser code.
