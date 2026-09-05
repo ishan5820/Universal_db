@@ -8,6 +8,7 @@ import { getAllTasks, subscribeTaskChanges } from "@/lib/localTasks";
 
 const STATUS_COPY: Record<CloudSyncStatus, { title: string; detail: string }> = {
   local: { title: "Preparing cloud backup", detail: "Your calendar is still saved on this device while cloud backup starts." },
+  pending: { title: "Saved on this device", detail: "Your latest changes will be included in the next scheduled cloud backup, or you can back up now." },
   syncing: { title: "Backing up now", detail: "Local changes are being safely merged with your private cloud copy." },
   synced: { title: "Cloud backup is current", detail: "Sign in with this Google account on another device to recover this calendar." },
   offline: { title: "Waiting for internet", detail: "Changes remain saved on this device and will retry automatically when you reconnect." },
@@ -73,7 +74,7 @@ export function CloudBackupModal({ open, onClose }: { open: boolean; onClose: ()
         </div>
 
         <button type="button" onClick={() => void cloud.syncNow()} disabled={cloud.status === "syncing" || cloud.status === "account_mismatch"} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45"><RefreshCw className={`h-4 w-4 ${cloud.status === "syncing" ? "animate-spin" : ""}`} />{cloud.status === "syncing" ? "Backing up…" : "Back up now"}</button>
-        <p className="mt-3 text-center text-xs leading-5 text-slate-500">For an extra portable copy, use <strong>Export data</strong>. Its JSON file now includes every category, subtask, color, and saved view.</p>
+        <p className="mt-3 text-center text-xs leading-5 text-slate-500">Cloud backup runs when you sign in, reconnect, or every three hours. Changes are still saved on this device immediately. For an extra portable copy, use <strong>Export data</strong>.</p>
       </section>
     </div>
   );

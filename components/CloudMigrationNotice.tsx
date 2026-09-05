@@ -45,6 +45,8 @@ export function CloudMigrationNotice({ itemCount }: { itemCount: number }) {
     );
   }
 
+  if (cloud.status === "pending" && cloud.lastSyncedAt) return null;
+
   if (cloud.status === "offline" || cloud.status === "error" || cloud.status === "account_mismatch") {
     const accountMismatch = cloud.status === "account_mismatch";
     return (

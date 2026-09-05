@@ -18,11 +18,13 @@ export function toLocalTimeString(date: Date): string {
 
 export function toTimeInputValue(value: string | null): string {
   if (!value) return "";
-  const match = value.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (!match) return value;
+  const match = value.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i);
+  if (!match) return "";
   let hour = Number(match[1]);
-  if (match[3].toUpperCase() === "PM" && hour !== 12) hour += 12;
-  if (match[3].toUpperCase() === "AM" && hour === 12) hour = 0;
+  const period = match[3]?.toUpperCase();
+  if (period === "PM" && hour !== 12) hour += 12;
+  if (period === "AM" && hour === 12) hour = 0;
+  if (hour < 0 || hour > 23) return "";
   return `${String(hour).padStart(2, "0")}:${match[2]}`;
 }
 
@@ -36,23 +38,42 @@ export function fromTimeInputValue(value: string): string | null {
 
 export function formatTimeRange(start: string | null, end: string | null): string | null {
   if (!start) return null;
-  if (!end) return start;
-  const startPeriod = start.match(/\s(AM|PM)$/)?.[1];
-  const endPeriod = end.match(/\s(AM|PM)$/)?.[1];
+  const formattedStart = formatTime(start);
+  if (!end) return formattedStart;
+  const formattedEnd = formatTime(end);
+  const startPeriod = formattedStart.match(/\s(AM|PM)$/)?.[1];
+  const endPeriod = formattedEnd.match(/\s(AM|PM)$/)?.[1];
   return startPeriod && startPeriod === endPeriod
-    ? `${start.replace(/\s(AM|PM)$/, "")} – ${end}`
-    : `${start} – ${end}`;
+    ? `${formattedStart.replace(/\s(AM|PM)$/, "")} – ${formattedEnd}`
+    : `${formattedStart} – ${formattedEnd}`;
+}
+
+export function formatTime(value: string): string {
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i);
+  if (!match) return value;
+  const minute = Number(match[2]);
+  let hour = Number(match[1]);
+  if (minute > 59) return value;
+  const suppliedPeriod = match[3]?.toUpperCase();
+  if (suppliedPeriod) {
+    if (hour < 1 || hour > 12) return value;
+    return `${hour}:${match[2]} ${suppliedPeriod}`;
+  }
+  if (hour < 0 || hour > 23) return value;
+  const period = hour >= 12 ? "PM" : "AM";
+  hour = hour % 12 || 12;
+  return `${hour}:${match[2]} ${period}`;
 }
 
 export function timeSortValue(value: string | null): number {
   if (!value) return Number.POSITIVE_INFINITY;
-  const twelveHour = value.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  const twelveHour = value.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)$/i);
   if (twelveHour) {
     let hour = Number(twelveHour[1]) % 12;
     if (twelveHour[3].toUpperCase() === "PM") hour += 12;
     return hour * 60 + Number(twelveHour[2]);
   }
-  const twentyFourHour = value.match(/^(\d{1,2}):(\d{2})$/);
+  const twentyFourHour = value.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
   if (twentyFourHour) return Number(twentyFourHour[1]) * 60 + Number(twentyFourHour[2]);
   return Number.POSITIVE_INFINITY;
 }

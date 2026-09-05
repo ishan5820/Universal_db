@@ -1,4 +1,4 @@
-import { calendarDayNumber, toLocalDateString, weekdayForDate } from "@/lib/datetime";
+import { calendarDayNumber, formatTime, toLocalDateString, weekdayForDate } from "@/lib/datetime";
 
 export type RelativeDueTone = "none" | "overdue" | "today" | "soon" | "normal";
 
@@ -14,7 +14,7 @@ export function formatRelativeDue(dueDate: string | null, dueTime: string | null
   if (!dueDate) return { label: "", tone: "none" };
   const today = toLocalDateString(new Date());
   const distance = calendarDayNumber(dueDate) - calendarDayNumber(today);
-  const time = dueTime ? ` · ${dueTime}` : "";
+  const time = dueTime ? ` · ${formatTime(dueTime)}` : "";
 
   if (distance < 0) return { label: `Overdue · ${dateLabel(dueDate, false)}`, tone: "overdue" };
   if (distance === 0) return { label: `Today${time}`, tone: "today" };

@@ -26,6 +26,8 @@ export function AccountControl({ mobile = false }: { mobile?: boolean }) {
       ? "Backing up…"
       : cloud.status === "synced"
         ? "Backed up across devices"
+        : cloud.status === "pending"
+          ? "Saved locally · backup scheduled"
         : cloud.status === "offline"
           ? "Saved locally · waiting for internet"
           : cloud.status === "account_mismatch"
@@ -37,6 +39,8 @@ export function AccountControl({ mobile = false }: { mobile?: boolean }) {
       ? LoaderCircle
       : cloud.status === "synced"
         ? Check
+        : cloud.status === "pending"
+          ? Cloud
         : cloud.status === "offline"
           ? CloudOff
           : cloud.status === "error" || cloud.status === "account_mismatch"

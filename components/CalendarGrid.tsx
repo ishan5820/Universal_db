@@ -10,7 +10,7 @@ import { AlignLeft, CalendarDays, CalendarPlus, Check, ChevronDown, ChevronLeft,
 import { addSubtask, createTask, deleteSeries, deleteSubtask, deleteTask, toggleComplete, toggleSubtask, updateSeries, updateTask, type TaskDraft } from "@/lib/localTasks";
 import { CATEGORY_ORDER, CATEGORY_STYLES } from "@/lib/categories";
 import { categoryHex, categorySoftStyle, itemColorStyle, useCategoryColors } from "@/components/CategoryColorProvider";
-import { compareTimes, formatTimeRange, fromTimeInputValue, toLocalDateString, toTimeInputValue } from "@/lib/datetime";
+import { compareTimes, formatTime, formatTimeRange, fromTimeInputValue, toLocalDateString, toTimeInputValue } from "@/lib/datetime";
 import { CALENDAR_VIEW_CHANGE_EVENT, CALENDAR_VIEW_STORAGE_KEY, isCalendarView, type CalendarView } from "@/lib/preferences";
 import type { Task, TaskCategory, TaskKind, TaskShade, TaskUpdate } from "@/types/task";
 
@@ -45,7 +45,7 @@ function sortDayTasks(tasks: Task[]): Task[] {
 function TaskChip({ task, onOpen, subtaskLimit }: { task: Task; onOpen: () => void; subtaskLimit?: number }) {
   const { colors } = useCategoryColors();
   const event = task.kind === "event";
-  const time = event ? formatTimeRange(task.due_time, task.end_time) : task.due_time;
+  const time = event ? formatTimeRange(task.due_time, task.end_time) : task.due_time ? formatTime(task.due_time) : null;
   const subtasks = task.subtasks ?? [];
   const visibleSubtasks = subtaskLimit === undefined ? subtasks : subtasks.slice(0, subtaskLimit);
   const hiddenSubtasks = subtasks.length - visibleSubtasks.length;
@@ -67,7 +67,7 @@ function TaskChip({ task, onOpen, subtaskLimit }: { task: Task; onOpen: () => vo
 function TaskDetailsModal({ task, onClose, onEdit, onTaskChange }: { task: Task; onClose: () => void; onEdit: () => void; onTaskChange: (task: Task) => void }) {
   const { colors } = useCategoryColors();
   const dateLabel = task.due_date ? format(parseCalendarDate(task.due_date), "EEEE, MMMM d, yyyy") : "No date";
-  const timeLabel = task.kind === "event" ? formatTimeRange(task.due_time, task.end_time) : task.due_time;
+  const timeLabel = task.kind === "event" ? formatTimeRange(task.due_time, task.end_time) : task.due_time ? formatTime(task.due_time) : null;
   const completedSubtasks = task.subtasks.filter((subtask) => subtask.is_completed).length;
   const [subtaskTitle, setSubtaskTitle] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);

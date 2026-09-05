@@ -4,7 +4,7 @@ Universal Dashboard is a private, local-first calendar for coursework, student o
 
 ## Privacy model
 
-Calendar data is saved locally first using IndexedDB, with a localStorage fallback. After Google sign-in, tasks, events, subtasks, category colors, and calendar view preferences are automatically backed up to the user's private Supabase rows and synchronized across devices.
+Calendar data is saved locally first using IndexedDB, with a localStorage fallback. After Google sign-in, tasks, events, subtasks, category colors, and calendar view preferences are backed up to the user's private Supabase rows when they sign in, reconnect, request a manual backup, and every three hours.
 
 Signed-in users can recover their cloud-backed calendar after clearing browser site data by signing in again. **Backup details** shows the latest successful cloud backup, the local item count, and a manual retry control. Signed-out users should download JSON backups regularly with **Export data** and restore them through **Classes → Import syllabus → JSON backup**.
 
