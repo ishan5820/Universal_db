@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { AuthProvider } from "@/components/AuthProvider";
 import { CategoryColorProvider } from "@/components/CategoryColorProvider";
+import { ClearCalendarControl } from "@/components/ClearCalendarControl";
 import { CloudSyncProvider } from "@/components/CloudSyncProvider";
 import { Sidebar } from "@/components/Sidebar";
 import "./globals.css";
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
             <CategoryColorProvider>
               <Sidebar />
               <div className="min-h-screen pb-20 md:pb-0 md:pl-64">{children}</div>
+              <ClearCalendarControl />
             </CategoryColorProvider>
           </CloudSyncProvider>
         </AuthProvider>

@@ -602,6 +602,21 @@ export function deleteTasks(ids: string[]): Promise<TaskActionResult> {
   });
 }
 
+export function clearCalendar(): Promise<TaskListActionResult> {
+  return enqueue(async () => {
+    try {
+      const state = await readState();
+      const deleted = state.tasks;
+      if (!deleted.length) return { ok: true, tasks: [], count: 0 };
+      await writeState({ version: 1, tasks: [] });
+      announceChange();
+      return { ok: true, tasks: deleted, count: deleted.length };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not clear the calendar." };
+    }
+  });
+}
+
 export function deleteImportBatch(batchId: string): Promise<TaskActionResult> {
   return enqueue(async () => {
     try {
