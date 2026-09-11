@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { CalendarArrowDown, CalendarDays, CalendarPlus, Download, GraduationCap, HardDrive, Heart, LayoutDashboard, Palette, RefreshCw, Settings2, Trophy, Users, X } from "lucide-react";
@@ -13,6 +13,8 @@ import { AccountControl } from "@/components/AccountControl";
 import { categoryHex, useCategoryColors } from "@/components/CategoryColorProvider";
 import { createBackupDocument, downloadBackupDocument } from "@/lib/backup";
 import { readLocalPreferences } from "@/lib/preferences";
+import { BASE_CALENDAR_COLORS } from "@/lib/calendarColors";
+import { getClassRegistrySnapshot } from "@/lib/localClasses";
 
 const items = [
   { href: "/", label: "Overview", icon: LayoutDashboard, category: null },
@@ -23,7 +25,7 @@ const items = [
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { colors } = useCategoryColors();
+  const { colors, classes } = useCategoryColors();
   const [syncOpen, setSyncOpen] = useState(false);
   const [recurringOpen, setRecurringOpen] = useState(false);
   const [calendarImportOpen, setCalendarImportOpen] = useState(false);
@@ -33,12 +35,25 @@ export function Sidebar() {
   const [exportBusy, setExportBusy] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
+  const classWheelStyle = useMemo(() => {
+    const classColors = classes.map((calendarClass) => calendarClass.color);
+    const wheelColors = classColors.length > 1 ? classColors : BASE_CALENDAR_COLORS.slice(0, 4);
+    if (wheelColors.length === 1) return { backgroundColor: wheelColors[0] };
+    const step = 100 / wheelColors.length;
+    return { background: `conic-gradient(${wheelColors.map((color, index) => `${color} ${index * step}% ${(index + 1) * step}%`).join(", ")})` };
+  }, [classes]);
+
   const exportData = async () => {
     setExportBusy(true); setExportError(null);
-    const result = await getAllTasks();
-    setExportBusy(false);
-    if (!result.ok) { setExportError(result.error); return; }
-    downloadBackupDocument(createBackupDocument(result.tasks, readLocalPreferences()));
+    try {
+      const [result, classRegistry] = await Promise.all([getAllTasks(), getClassRegistrySnapshot()]);
+      if (!result.ok) { setExportError(result.error); return; }
+      downloadBackupDocument(createBackupDocument(result.tasks, readLocalPreferences(), classRegistry));
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : "The complete backup could not be created.");
+    } finally {
+      setExportBusy(false);
+    }
   };
 
   return (
@@ -51,7 +66,7 @@ export function Sidebar() {
         <nav className="mt-8 space-y-1" aria-label="Primary navigation">
           {items.map(({ href, label, icon: Icon, category }) => {
             const active = href === "/" ? pathname === "/" : href === "/social" ? pathname === "/social" : pathname.startsWith(href);
-            return <Link key={href} href={href} aria-current={active ? "page" : undefined} className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${active ? "bg-slate-950 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"}`}><Icon className="h-[18px] w-[18px]" /><span className="flex-1">{label}</span>{category && <span className="h-2 w-2 rounded-full" style={{ backgroundColor: categoryHex(colors, category) }} aria-hidden="true" />}</Link>;
+            return <Link key={href} href={href} aria-current={active ? "page" : undefined} className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${active ? "bg-slate-950 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"}`}>{category === "classes" ? <span className="flex h-[20px] w-[20px] items-center justify-center rounded-full shadow-sm ring-1 ring-white/70" style={classWheelStyle} aria-hidden="true"><GraduationCap className="h-3.5 w-3.5 text-white drop-shadow" /></span> : <Icon className="h-[18px] w-[18px]" />}<span className="flex-1">{label}</span>{category && category !== "classes" && <span className="h-2 w-2 rounded-full" style={{ backgroundColor: categoryHex(colors, category) }} aria-hidden="true" />}</Link>;
           })}
           <Link href="/social/sports" aria-current={pathname === "/social/sports" ? "page" : undefined} className={`ml-5 flex items-center gap-2.5 rounded-xl border-l-2 px-3 py-2 text-xs font-bold transition ${pathname === "/social/sports" ? "border-indigo-500 bg-indigo-50 text-indigo-950" : "border-slate-200 text-slate-500 hover:border-indigo-300 hover:bg-slate-100 hover:text-slate-900"}`}><Trophy className="h-4 w-4" />Sporting Events</Link>
         </nav>
@@ -73,7 +88,7 @@ export function Sidebar() {
       <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-6 border-t border-slate-200 bg-white/95 px-1 pb-[max(env(safe-area-inset-bottom),0.35rem)] pt-1.5 backdrop-blur md:hidden" aria-label="Mobile navigation">
         {items.map(({ href, label, icon: Icon, category }) => {
           const active = href === "/" ? pathname === "/" : href === "/social" ? pathname === "/social" : pathname.startsWith(href);
-          return <Link key={href} href={href} aria-current={active ? "page" : undefined} className={`relative flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-semibold ${active ? "bg-slate-100 text-slate-950" : "text-slate-500"}`}><span className="relative"><Icon className="h-5 w-5" />{category && <span className="absolute -right-1 -top-0.5 h-2 w-2 rounded-full ring-2 ring-white" style={{ backgroundColor: categoryHex(colors, category) }} />}</span>{label}</Link>;
+          return <Link key={href} href={href} aria-current={active ? "page" : undefined} className={`relative flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-semibold ${active ? "bg-slate-100 text-slate-950" : "text-slate-500"}`}><span className="relative">{category === "classes" ? <span className="flex h-5 w-5 items-center justify-center rounded-full shadow-sm" style={classWheelStyle}><GraduationCap className="h-3.5 w-3.5 text-white drop-shadow" /></span> : <Icon className="h-5 w-5" />}{category && category !== "classes" && <span className="absolute -right-1 -top-0.5 h-2 w-2 rounded-full ring-2 ring-white" style={{ backgroundColor: categoryHex(colors, category) }} />}</span>{label}</Link>;
         })}
         <Link href="/social/sports" aria-current={pathname === "/social/sports" ? "page" : undefined} className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-semibold ${pathname === "/social/sports" ? "bg-indigo-50 text-indigo-950" : "text-indigo-600"}`}><Trophy className="h-5 w-5" />Sports</Link>
         <button type="button" onClick={() => setToolsOpen(true)} aria-expanded={toolsOpen} className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-semibold text-indigo-700"><Settings2 className="h-5 w-5" />Tools</button>
@@ -100,7 +115,7 @@ export function Sidebar() {
           <section role="dialog" aria-modal="true" aria-labelledby="export-confirm-title" className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600"><Download className="h-5 w-5" /></div>
             <h2 id="export-confirm-title" className="mt-4 text-xl font-bold tracking-tight text-slate-950">Export all calendar data?</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-500">This will download a JSON backup containing every task, event, subtask, calendar color, and saved view preference on this device.</p>
+            <p className="mt-2 text-sm leading-6 text-slate-500">This will download a JSON backup containing every task, event, subtask, class, calendar color, and saved view preference on this device.</p>
             <div className="mt-6 grid grid-cols-2 gap-3">
               <button type="button" autoFocus onClick={() => setExportConfirmOpen(false)} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">Cancel</button>
               <button type="button" onClick={() => { setExportConfirmOpen(false); void exportData(); }} className="rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800">Export</button>

@@ -38,6 +38,10 @@ async function main() {
   assert.ok(anonymousRead.status === 401 || anonymousRead.status === 403, `Anonymous calendar read unexpectedly returned HTTP ${anonymousRead.status}.`);
   pass("Anonymous calendar access: denied by database security");
 
+  const anonymousClassRead = await fetch(new URL("/rest/v1/calendar_classes?select=id&limit=1", projectUrl), { headers });
+  assert.ok(anonymousClassRead.status === 401 || anonymousClassRead.status === 403, `Anonymous class read unexpectedly returned HTTP ${anonymousClassRead.status}.`);
+  pass("Anonymous class access: denied by database security");
+
   console.log("PASS Release readiness checks completed without printing any key values.");
 }
 

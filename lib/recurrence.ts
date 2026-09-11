@@ -23,6 +23,7 @@ export function expandSeries(spec: RecurrenceSpec, seriesId: string): NewTask[] 
     if (!allowed.has(weekdayForDate(date)) || skipped.has(date)) continue;
     if (results.length >= MAX_SERIES_OCCURRENCES) throw new RecurrenceLimitError();
     results.push({
+      class_id: spec.classId ?? null,
       canvas_uid: null,
       title: spec.title,
       description: spec.description ?? null,

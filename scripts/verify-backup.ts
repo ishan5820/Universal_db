@@ -1,18 +1,37 @@
 import assert from "node:assert/strict";
 import { BACKUP_FORMAT, BACKUP_VERSION, createBackupDocument, parseBackupDocument } from "../lib/backup";
-import { mergeTasksFromBackup, replaceTasksFromCloud, validateBackupTasks } from "../lib/localTasks";
+import { getAllTasks, mergeTasksFromBackup, replaceTasksFromCloud, validateBackupTasks } from "../lib/localTasks";
+import { getClassRegistrySnapshot, replaceClassRegistry } from "../lib/localClasses";
 import type { LocalPreferences } from "../lib/preferences";
+import type { ClassRegistrySnapshot } from "../types/calendarClass";
 import type { Task } from "../types/task";
+
+const classRegistry: ClassRegistrySnapshot = {
+  version: 1,
+  classes: [{
+    id: "30000000-0000-4000-8000-000000000001",
+    name: "PHI 317K",
+    course_code: "PHI 317K",
+    aliases: ["PHI317K"],
+    color: "#2563EB",
+    deleted_at: null,
+    created_at: "2026-09-04T11:00:00.000Z",
+    updated_at: "2026-09-04T11:00:00.000Z",
+  }],
+  unassigned_color: "#64748B",
+  updated_at: "2026-09-04T11:00:00.000Z",
+};
 
 const task: Task = {
   id: "10000000-0000-4000-8000-000000000001",
+  class_id: classRegistry.classes[0].id,
   canvas_uid: null,
   title: "Backup integrity check",
   description: "Includes every task field and its subtasks.",
   due_date: "2026-09-04",
   due_time: "18:00:00",
   location: "UTC 1.102",
-  category: "orgs",
+  category: "classes",
   course_code: null,
   is_pinned: true,
   is_completed: false,
@@ -35,15 +54,17 @@ const preferences: LocalPreferences = {
   workspaceViews: { classes: "calendar", orgs: "list", social: "calendar" },
 };
 
-const backup = createBackupDocument([task], preferences, "2026-09-04T14:00:00.000Z");
+const backup = createBackupDocument([task], preferences, classRegistry, "2026-09-04T14:00:00.000Z");
 assert.equal(backup.format, BACKUP_FORMAT);
 assert.equal(backup.version, BACKUP_VERSION);
 assert.deepEqual(backup.tasks, [task]);
 assert.deepEqual(backup.preferences, preferences);
+assert.deepEqual(backup.class_registry, classRegistry);
 
 const parsed = parseBackupDocument(JSON.parse(JSON.stringify(backup)));
 assert.equal(parsed.isLegacy, false);
 assert.deepEqual(parsed.preferences, preferences);
+assert.deepEqual(parsed.classRegistry, classRegistry);
 const checked = validateBackupTasks(parsed.tasks);
 assert.equal(checked.ok, true);
 if (checked.ok) {
@@ -51,18 +72,22 @@ if (checked.ok) {
   assert.deepEqual(checked.tasks[0].subtasks, task.subtasks, "Restore must preserve subtasks.");
 }
 
-assert.deepEqual(parseBackupDocument([task]), { tasks: [task], preferences: null, isLegacy: true });
-assert.deepEqual(parseBackupDocument({ tasks: [task] }), { tasks: [task], preferences: null, isLegacy: true });
+assert.deepEqual(parseBackupDocument([task]), { tasks: [task], preferences: null, classRegistry: null, isLegacy: true });
+assert.deepEqual(parseBackupDocument({ tasks: [task] }), { tasks: [task], preferences: null, classRegistry: null, isLegacy: true });
+const previousBackup = parseBackupDocument({ ...backup, version: 2, class_registry: undefined });
+assert.equal(previousBackup.isLegacy, true);
+assert.equal(previousBackup.classRegistry, null);
 assert.throws(() => parseBackupDocument({ ...backup, version: 999 }), /not supported/);
 assert.throws(() => parseBackupDocument({ ...backup, format: "different-app" }), /different application/);
 
-const empty = parseBackupDocument(createBackupDocument([], preferences));
+const empty = parseBackupDocument(createBackupDocument([], preferences, classRegistry));
 const emptyChecked = validateBackupTasks(empty.tasks);
 assert.equal(emptyChecked.ok, true, "A settings-only backup should remain restorable.");
 
-console.log("PASS Versioned backups include all calendar rows and preferences.");
+console.log("PASS Versioned backups include all calendar rows, classes, and preferences.");
 console.log("PASS Restore validation preserves item IDs and subtasks.");
 console.log("PASS Legacy array and object backups remain compatible.");
+console.log("PASS Version 2 backups remain compatible without inventing class settings.");
 console.log("PASS Foreign and unsupported backup formats are rejected.");
 
 async function verifySafeMerge() {
@@ -80,6 +105,12 @@ async function verifySafeMerge() {
 
   const seeded = await replaceTasksFromCloud([task]);
   assert.equal(seeded.ok, true);
+  const restoredClasses = await replaceClassRegistry(parsed.classRegistry);
+  assert.equal(restoredClasses.ok, true);
+  const savedRegistry = await getClassRegistrySnapshot();
+  assert.equal(savedRegistry.classes[0]?.id, classRegistry.classes[0].id);
+  assert.equal(savedRegistry.unassigned_color, classRegistry.unassigned_color);
+  assert.equal((await getAllTasks()).ok, true);
   const repeated = await mergeTasksFromBackup([task]);
   assert.equal(repeated.ok, true);
   if (repeated.ok) {
@@ -103,7 +134,7 @@ async function verifySafeMerge() {
   if (stale.ok) {
     assert.equal(stale.tasks[0].description, "Newer backup copy", "An older backup must not overwrite newer local data.");
   }
-  console.log("PASS Restore merges repeated backups without duplicates and preserves newer local changes.");
+  console.log("PASS Restore preserves class IDs and merges repeated backups without duplicating or overwriting newer data.");
 }
 
 void verifySafeMerge().catch((error) => {

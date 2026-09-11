@@ -41,6 +41,7 @@ const CHANGE_EVENT = "universal-dashboard:tasks-changed";
 const CHANGE_CHANNEL = "universal-dashboard-task-changes";
 const STORAGE_LOCK = "universal-dashboard-storage-write";
 const MAX_TASKS = 10_000;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 let mutationQueue: Promise<unknown> = Promise.resolve();
 let persistenceRequested = false;
@@ -102,7 +103,10 @@ function sanitizeNewTask(value: unknown): NewTask | string {
   const subtasks = sanitizeSubtasks(input.subtasks);
   if (typeof subtasks === "string") return subtasks;
   if (kind === "event" && subtasks.length) return "Events cannot contain subtasks.";
+  const classId = category === "classes" ? cleanText(input.class_id) : null;
+  if (classId && !UUID_PATTERN.test(classId)) return "Class assignment is invalid.";
   return {
+    class_id: classId,
     canvas_uid: cleanText(input.canvas_uid),
     title,
     description: cleanText(input.description),
@@ -133,10 +137,14 @@ function sanitizePatch(value: unknown, existing: Task): TaskUpdate | string {
   const allowed = new Set<keyof NewTask>([
     "title", "description", "due_date", "due_time", "location", "category", "course_code", "is_pinned",
     "is_completed", "source", "kind", "end_time", "series_id", "recurrence_rule", "series_until",
-    "import_batch_id", "subtasks", "canvas_uid", "color_shade",
+    "import_batch_id", "subtasks", "canvas_uid", "color_shade", "class_id",
   ]);
+  const keys = Object.keys(input);
+  if ((input.category !== undefined || input.class_id !== undefined) && merged.class_id !== existing.class_id && !keys.includes("class_id")) {
+    keys.push("class_id");
+  }
   return Object.fromEntries(
-    Object.keys(input)
+    keys
       .filter((key) => allowed.has(key as keyof NewTask))
       .map((key) => [key, merged[key as keyof NewTask]]),
   ) as TaskUpdate;
@@ -150,6 +158,7 @@ function normalizeTask(value: unknown): Task | null {
   const now = new Date().toISOString();
   return {
     ...sanitized,
+    class_id: sanitized.class_id ?? null,
     location: sanitized.location ?? null,
     subtasks: sanitized.subtasks ?? [],
     id: typeof input.id === "string" && input.id.length > 0 ? input.id : newId(),
@@ -328,7 +337,7 @@ function enqueue<T>(operation: () => Promise<T>): Promise<T> {
 
 function createTaskRow(row: NewTask): Task {
   const now = new Date().toISOString();
-  return { ...row, location: row.location ?? null, subtasks: row.subtasks ?? [], id: newId(), created_at: now, updated_at: now };
+  return { ...row, class_id: row.class_id ?? null, location: row.location ?? null, subtasks: row.subtasks ?? [], id: newId(), created_at: now, updated_at: now };
 }
 
 function duplicateCanvasUid(tasks: Task[], canvasUid: string | null, excludeId?: string): boolean {
@@ -495,6 +504,44 @@ export function updateTask(id: string, input: TaskUpdate): Promise<TaskActionRes
       return { ok: true, task: nextTask };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : "Could not update the task." };
+    }
+  });
+}
+
+export function assignTaskClasses(assignments: ReadonlyArray<{ taskId: string; classId: string | null }>): Promise<TaskListActionResult> {
+  return enqueue(async () => {
+    try {
+      if (!Array.isArray(assignments) || assignments.length > MAX_TASKS) return { ok: false, error: "Class assignments are invalid." };
+      const assignmentMap = new Map<string, string | null>();
+      for (const assignment of assignments) {
+        if (!assignment || typeof assignment.taskId !== "string" || !assignment.taskId) return { ok: false, error: "A calendar item assignment is invalid." };
+        if (assignment.classId !== null && !UUID_PATTERN.test(assignment.classId)) return { ok: false, error: "A class assignment is invalid." };
+        assignmentMap.set(assignment.taskId, assignment.classId);
+      }
+      const state = await readState();
+      const knownTaskIds = new Set(state.tasks.map((task) => task.id));
+      if ([...assignmentMap.keys()].some((taskId) => !knownTaskIds.has(taskId))) return { ok: false, error: "One or more calendar items could not be found." };
+      if (state.tasks.some((task) => {
+        const classId = assignmentMap.get(task.id);
+        return classId !== undefined && classId !== null && task.category !== "classes";
+      })) return { ok: false, error: "Only Classes items can be assigned to a class." };
+      const now = new Date().toISOString();
+      const changed: Task[] = [];
+      const tasks = state.tasks.map((task) => {
+        if (!assignmentMap.has(task.id)) return task;
+        const classId = assignmentMap.get(task.id) ?? null;
+        if (task.class_id === classId) return task;
+        const updated = { ...task, class_id: classId, updated_at: now };
+        changed.push(updated);
+        return updated;
+      });
+      if (changed.length) {
+        await writeState({ version: 1, tasks });
+        announceChange();
+      }
+      return { ok: true, tasks: changed, count: changed.length };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Could not assign calendar items to classes." };
     }
   });
 }
@@ -749,6 +796,7 @@ export function extendSeries(seriesId: string, newUntil: string): Promise<TaskAc
         description: sample.description,
         location: sample.location,
         category: sample.category,
+        classId: sample.class_id,
         courseCode: sample.course_code,
         kind: sample.kind,
         colorShade: sample.color_shade,

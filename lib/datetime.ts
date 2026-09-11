@@ -1,5 +1,12 @@
 export const APP_TIMEZONE = "America/Chicago";
 
+export function toDeviceDateString(date: Date): string {
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 export function toLocalDateString(date: Date): string {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: APP_TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit",

@@ -12,6 +12,10 @@ export interface LocalPreferences {
 }
 
 export const DEFAULT_CATEGORY_COLORS: CategoryColors = { classes: "green", orgs: "orange", social: "purple" };
+export const CATEGORY_BASE_COLORS: Record<CategoryColorId, string> = {
+  green: "#059669", orange: "#D97706", purple: "#7C3AED", blue: "#2563EB", red: "#DC2626",
+  pink: "#DB2777", teal: "#0D9488", yellow: "#CA8A04", gray: "#64748B",
+};
 export const CATEGORY_COLORS_STORAGE_KEY = "universal-dashboard-category-colors-v1";
 export const CATEGORY_COLORS_CHANGE_EVENT = "universal-dashboard:category-colors-changed";
 export const CALENDAR_VIEW_STORAGE_KEY = "universal-dashboard-calendar-view";
@@ -39,8 +43,11 @@ export function normalizeCategoryColors(value: unknown): CategoryColors {
   if (!value || typeof value !== "object") return DEFAULT_CATEGORY_COLORS;
   const input = value as Partial<Record<TaskCategory, unknown>>;
   const result = { ...DEFAULT_CATEGORY_COLORS };
+  if (typeof input.classes === "string" && COLOR_IDS.has(input.classes as CategoryColorId)) {
+    result.classes = input.classes as CategoryColorId;
+  }
   const used = new Set<CategoryColorId>();
-  for (const category of CATEGORIES) {
+  for (const category of ["orgs", "social"] as const) {
     const requested = input[category];
     const preferred = typeof requested === "string" && COLOR_IDS.has(requested as CategoryColorId)
       ? requested as CategoryColorId

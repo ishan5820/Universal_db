@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { synchronizeCloudCalendar } from "@/lib/cloudSync";
 import { loadCloudCheckpoint, saveCloudCheckpoint } from "@/lib/cloudCheckpoint";
 import { getAllTasks, replaceTasksFromCloud, subscribeTaskChanges } from "@/lib/localTasks";
+import { getClassRegistrySnapshot, replaceClassRegistry, subscribeClassChanges } from "@/lib/localClasses";
 import { CALENDAR_VIEW_CHANGE_EVENT, CATEGORY_COLORS_CHANGE_EVENT, WORKSPACE_VIEW_CHANGE_EVENT } from "@/lib/preferences";
 
 export type CloudSyncStatus = "local" | "pending" | "syncing" | "synced" | "offline" | "error" | "account_mismatch";
@@ -68,13 +69,15 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
           localChangesPending.current = false;
           setStatus("syncing");
           setError(null);
-          const local = await getAllTasks();
+          const [local, classRegistry] = await Promise.all([getAllTasks(), getClassRegistrySnapshot()]);
           if (!local.ok) throw new Error(local.error);
           const savedCheckpoint = await loadCloudCheckpoint(userId);
           const synchronize = () => synchronizeCloudCalendar({
               supabase,
               userId,
               localTasks: local.tasks,
+              localClasses: classRegistry.classes,
+              localUnassignedColor: classRegistry.unassigned_color,
               checkpoint: savedCheckpoint,
             });
           let result: Awaited<ReturnType<typeof synchronize>>;
@@ -89,8 +92,15 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
           }
           applyingCloudState.current = true;
           const saved = await replaceTasksFromCloud(result.tasks);
-          applyingCloudState.current = false;
           if (!saved.ok) throw new Error(saved.error);
+          const savedClasses = await replaceClassRegistry({
+            version: 1,
+            classes: result.classes,
+            unassigned_color: result.unassignedColor,
+            updated_at: result.checkpoint.lastSuccessfulAt,
+          });
+          applyingCloudState.current = false;
+          if (!savedClasses.ok) throw new Error(savedClasses.error);
           await saveCloudCheckpoint(userId, result.checkpoint);
           setLastSyncedAt(result.checkpoint.lastSuccessfulAt);
           setStatus(localChangesPending.current ? "pending" : "synced");
@@ -146,6 +156,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     };
     const onOnline = () => void syncNow();
     const unsubscribeTasks = subscribeTaskChanges(markPending);
+    const unsubscribeClasses = subscribeClassChanges(markPending);
     window.addEventListener(CATEGORY_COLORS_CHANGE_EVENT, markPending);
     window.addEventListener(CALENDAR_VIEW_CHANGE_EVENT, markPending);
     window.addEventListener(WORKSPACE_VIEW_CHANGE_EVENT, markPending);
@@ -153,6 +164,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     const interval = window.setInterval(() => void syncNow(), SYNC_INTERVAL_MS);
     return () => {
       unsubscribeTasks();
+      unsubscribeClasses();
       window.clearInterval(interval);
       window.removeEventListener(CATEGORY_COLORS_CHANGE_EVENT, markPending);
       window.removeEventListener(CALENDAR_VIEW_CHANGE_EVENT, markPending);

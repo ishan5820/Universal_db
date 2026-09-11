@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   addDays, addMonths, addWeeks, eachDayOfInterval, endOfWeek, format, isSameDay,
@@ -9,10 +9,11 @@ import {
 import { AlignLeft, CalendarDays, CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, ListChecks, MapPin, Pencil, Pin, Plus, Trash2, X } from "lucide-react";
 import { addSubtask, createTask, deleteSeries, deleteSubtask, deleteTask, toggleComplete, toggleSubtask, updateSeries, updateTask, type TaskDraft } from "@/lib/localTasks";
 import { CATEGORY_ORDER, CATEGORY_STYLES } from "@/lib/categories";
-import { categoryHex, categorySoftStyle, itemColorStyle, useCategoryColors } from "@/components/CategoryColorProvider";
-import { compareTimes, formatTime, formatTimeRange, fromTimeInputValue, toLocalDateString, toTimeInputValue } from "@/lib/datetime";
+import { ClassSelectField } from "@/components/ClassSelectField";
+import { categorySoftStyle, resolveClassName, resolveTaskColor, solidItemColorStyle, solidSoftStyle, useCategoryColors } from "@/components/CategoryColorProvider";
+import { compareTimes, formatTime, formatTimeRange, fromTimeInputValue, toDeviceDateString, toTimeInputValue } from "@/lib/datetime";
 import { CALENDAR_VIEW_CHANGE_EVENT, CALENDAR_VIEW_STORAGE_KEY, isCalendarView, type CalendarView } from "@/lib/preferences";
-import type { Task, TaskCategory, TaskKind, TaskShade, TaskUpdate } from "@/types/task";
+import type { Task, TaskCategory, TaskKind, TaskUpdate } from "@/types/task";
 
 export interface CalendarGridProps {
   tasks: Task[];
@@ -23,6 +24,8 @@ export interface CalendarGridProps {
 }
 
 type EditorState = { task: Task | null; date: string | null } | null;
+const CALENDAR_LOADING_DATE = new Date(2000, 0, 1, 12);
+
 function parseCalendarDate(value: string): Date {
   const [year, month, day] = value.split("-").map(Number);
   return new Date(year, month - 1, day, 12);
@@ -43,7 +46,8 @@ function sortDayTasks(tasks: Task[]): Task[] {
 }
 
 function TaskChip({ task, onOpen, subtaskLimit }: { task: Task; onOpen: () => void; subtaskLimit?: number }) {
-  const { colors } = useCategoryColors();
+  const { colors, classes, unassignedColor } = useCategoryColors();
+  const taskColor = resolveTaskColor(colors, classes, unassignedColor, task);
   const event = task.kind === "event";
   const time = event ? formatTimeRange(task.due_time, task.end_time) : task.due_time ? formatTime(task.due_time) : null;
   const subtasks = task.subtasks ?? [];
@@ -51,7 +55,7 @@ function TaskChip({ task, onOpen, subtaskLimit }: { task: Task; onOpen: () => vo
   const hiddenSubtasks = subtasks.length - visibleSubtasks.length;
   return (
     <div className="w-full space-y-0.5">
-      <button type="button" onClick={(eventClick) => { eventClick.stopPropagation(); onOpen(); }} style={itemColorStyle(colors, task.category, task.color_shade, task.kind)} className={`block w-full truncate rounded-md px-1.5 py-1 text-left text-[11px] leading-4 transition hover:brightness-95 focus:z-10 ${event ? "border-l-[3px]" : ""} ${task.is_completed ? "opacity-45" : ""}`} title={`${task.title}${time ? ` · ${time}` : ""}`}>
+      <button type="button" onClick={(eventClick) => { eventClick.stopPropagation(); onOpen(); }} style={solidItemColorStyle(taskColor, task.kind)} className={`block w-full truncate rounded-md px-1.5 py-1 text-left text-[11px] leading-4 transition hover:brightness-95 focus:z-10 ${event ? "border-l-[3px]" : ""} ${task.is_completed ? "opacity-45" : ""}`} title={`${task.title}${time ? ` · ${time}` : ""}`}>
         <span className="flex min-w-0 items-center gap-1">
           {task.is_pinned && <Pin className="h-2.5 w-2.5 shrink-0 fill-current" />}
           {time && <span className="shrink-0 font-bold">{time}</span>}
@@ -59,13 +63,15 @@ function TaskChip({ task, onOpen, subtaskLimit }: { task: Task; onOpen: () => vo
           <span className={`truncate ${task.is_completed ? "line-through" : ""}`}>{task.title}</span>
         </span>
       </button>
-      {visibleSubtasks.length > 0 && <div className="ml-2 space-y-0.5 border-l border-slate-200 pl-1">{visibleSubtasks.map((subtask) => <button key={subtask.id} type="button" onClick={(eventClick) => { eventClick.stopPropagation(); onOpen(); }} className="flex w-full items-center gap-1 rounded-md bg-slate-50 px-1.5 py-1 text-left text-[10px] leading-3.5 text-slate-600 transition hover:bg-slate-100" title={subtask.title}><span style={subtask.is_completed ? { backgroundColor: categoryHex(colors, task.category, task.color_shade) } : undefined} className={`flex h-3 w-3 shrink-0 items-center justify-center rounded-[3px] border ${subtask.is_completed ? "border-transparent text-white" : "border-slate-300 bg-white text-transparent"}`}><Check className="h-2.5 w-2.5" /></span><span className={`truncate ${subtask.is_completed ? "line-through opacity-55" : ""}`}>{subtask.title}</span></button>)}{hiddenSubtasks > 0 && <button type="button" onClick={(eventClick) => { eventClick.stopPropagation(); onOpen(); }} className="w-full rounded-md px-1.5 py-0.5 text-left text-[10px] font-bold text-slate-400 hover:bg-slate-50">+{hiddenSubtasks} more subtask{hiddenSubtasks === 1 ? "" : "s"}</button>}</div>}
+      {visibleSubtasks.length > 0 && <div className="ml-2 space-y-0.5 border-l border-slate-200 pl-1">{visibleSubtasks.map((subtask) => <button key={subtask.id} type="button" onClick={(eventClick) => { eventClick.stopPropagation(); onOpen(); }} className="flex w-full items-center gap-1 rounded-md bg-slate-50 px-1.5 py-1 text-left text-[10px] leading-3.5 text-slate-600 transition hover:bg-slate-100" title={subtask.title}><span style={subtask.is_completed ? { backgroundColor: taskColor } : undefined} className={`flex h-3 w-3 shrink-0 items-center justify-center rounded-[3px] border ${subtask.is_completed ? "border-transparent text-white" : "border-slate-300 bg-white text-transparent"}`}><Check className="h-2.5 w-2.5" /></span><span className={`truncate ${subtask.is_completed ? "line-through opacity-55" : ""}`}>{subtask.title}</span></button>)}{hiddenSubtasks > 0 && <button type="button" onClick={(eventClick) => { eventClick.stopPropagation(); onOpen(); }} className="w-full rounded-md px-1.5 py-0.5 text-left text-[10px] font-bold text-slate-400 hover:bg-slate-50">+{hiddenSubtasks} more subtask{hiddenSubtasks === 1 ? "" : "s"}</button>}</div>}
     </div>
   );
 }
 
 function TaskDetailsModal({ task, onClose, onEdit, onTaskChange }: { task: Task; onClose: () => void; onEdit: () => void; onTaskChange: (task: Task) => void }) {
-  const { colors } = useCategoryColors();
+  const { colors, classes, unassignedColor } = useCategoryColors();
+  const taskColor = resolveTaskColor(colors, classes, unassignedColor, task);
+  const className = resolveClassName(classes, task);
   const dateLabel = task.due_date ? format(parseCalendarDate(task.due_date), "EEEE, MMMM d, yyyy") : "No date";
   const timeLabel = task.kind === "event" ? formatTimeRange(task.due_time, task.end_time) : task.due_time ? formatTime(task.due_time) : null;
   const completedSubtasks = task.subtasks.filter((subtask) => subtask.is_completed).length;
@@ -103,14 +109,14 @@ function TaskDetailsModal({ task, onClose, onEdit, onTaskChange }: { task: Task;
   return createPortal((
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-0 backdrop-blur-[2px] sm:items-center sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div role="dialog" aria-modal="true" aria-labelledby="task-details-title" className="max-h-[94vh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-3xl sm:p-6">
-        <header className="sticky top-0 z-10 -mx-5 -mt-5 flex items-start justify-between gap-4 border-b border-slate-100 bg-white/95 px-5 py-5 backdrop-blur sm:-mx-6 sm:-mt-6 sm:px-6"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span style={categorySoftStyle(colors, task.category)} className="rounded-full px-2.5 py-1 text-[11px] font-bold">{CATEGORY_STYLES[task.category].label}</span><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold capitalize text-slate-500">{task.kind}</span>{task.is_pinned && <Pin className="h-4 w-4 fill-amber-500 text-amber-500" />}</div><h2 id="task-details-title" className="mt-3 text-2xl font-bold tracking-tight text-slate-950">{task.title}</h2>{task.course_code && <p className="mt-1 text-sm font-bold text-slate-500">{task.course_code}</p>}</div><div className="flex shrink-0 items-center gap-1"><button type="button" onClick={onEdit} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white"><Pencil className="h-3.5 w-3.5" />Edit</button><button type="button" onClick={onClose} aria-label="Close details" className="rounded-full p-2 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button></div></header>
+        <header className="sticky top-0 z-10 -mx-5 -mt-5 flex items-start justify-between gap-4 border-b border-slate-100 bg-white/95 px-5 py-5 backdrop-blur sm:-mx-6 sm:-mt-6 sm:px-6"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span style={className ? solidSoftStyle(taskColor) : categorySoftStyle(colors, task.category)} className="rounded-full border-l-2 px-2.5 py-1 text-[11px] font-bold">{className ?? CATEGORY_STYLES[task.category].label}</span><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold capitalize text-slate-500">{task.kind}</span>{task.is_pinned && <Pin className="h-4 w-4 fill-amber-500 text-amber-500" />}</div><h2 id="task-details-title" className="mt-3 text-2xl font-bold tracking-tight text-slate-950">{task.title}</h2>{task.course_code && <p className="mt-1 text-sm font-bold text-slate-500">{task.course_code}</p>}</div><div className="flex shrink-0 items-center gap-1"><button type="button" onClick={onEdit} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white"><Pencil className="h-3.5 w-3.5" />Edit</button><button type="button" onClick={onClose} aria-label="Close details" className="rounded-full p-2 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button></div></header>
         <div className="mt-6 space-y-3">
           {task.kind === "task" && <button type="button" disabled={busyId !== null} onClick={() => void runMutation("complete", () => toggleComplete(task.id, !task.is_completed))} className={`flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-bold transition disabled:opacity-50 ${task.is_completed ? "border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}><Check className="h-4 w-4" />{busyId === "complete" ? "Saving…" : task.is_completed ? "Reopen task" : "Mark task completed"}</button>}
           <div className="flex items-start gap-3 rounded-2xl bg-slate-50 p-3"><CalendarDays className="mt-0.5 h-4 w-4 text-slate-400" /><div><p className="text-xs font-bold uppercase tracking-wider text-slate-400">Date</p><p className="mt-0.5 text-sm font-semibold text-slate-800">{dateLabel}</p></div></div>
           <div className="flex items-start gap-3 rounded-2xl bg-slate-50 p-3"><Clock3 className="mt-0.5 h-4 w-4 text-slate-400" /><div><p className="text-xs font-bold uppercase tracking-wider text-slate-400">Time</p><p className="mt-0.5 text-sm font-semibold text-slate-800">{timeLabel || "No time"}</p></div></div>
           {task.kind === "event" && <div className="flex items-start gap-3 rounded-2xl bg-slate-50 p-3"><MapPin className="mt-0.5 h-4 w-4 text-slate-400" /><div><p className="text-xs font-bold uppercase tracking-wider text-slate-400">Location</p><p className="mt-0.5 text-sm font-semibold text-slate-800">{task.location || "No location added"}</p></div></div>}
           <div className="flex items-start gap-3 rounded-2xl bg-slate-50 p-3"><AlignLeft className="mt-0.5 h-4 w-4 text-slate-400" /><div><p className="text-xs font-bold uppercase tracking-wider text-slate-400">Notes</p><p className="mt-0.5 whitespace-pre-wrap text-sm leading-6 text-slate-700">{task.description || "No notes added"}</p></div></div>
-          {task.kind === "task" && <section className="rounded-2xl border border-slate-200 p-3"><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><ListChecks className="h-4 w-4 text-slate-400" /><p className="text-xs font-bold uppercase tracking-wider text-slate-400">Subtasks</p></div><span className="text-xs font-bold text-slate-400">{completedSubtasks}/{task.subtasks.length}</span></div><p className="mt-2 text-xs leading-5 text-slate-500">Break this task into smaller steps and check each one off here.</p>{task.subtasks.length > 0 && <ul className="mt-3 space-y-1">{task.subtasks.map((subtask) => <li key={subtask.id} className="flex items-center gap-2 rounded-xl px-1 py-1.5 hover:bg-slate-50"><button type="button" disabled={busyId !== null} onClick={() => void runMutation(subtask.id, () => toggleSubtask(task.id, subtask.id, !subtask.is_completed))} aria-label={`${subtask.is_completed ? "Reopen" : "Complete"} subtask ${subtask.title}`} className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${subtask.is_completed ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300 bg-white text-transparent"} disabled:opacity-50`}><Check className="h-3.5 w-3.5" /></button><span className={`min-w-0 flex-1 text-sm ${subtask.is_completed ? "text-slate-400 line-through" : "text-slate-700"}`}>{subtask.title}</span><button type="button" disabled={busyId !== null} onClick={() => void runMutation(`delete-${subtask.id}`, () => deleteSubtask(task.id, subtask.id))} aria-label={`Delete subtask ${subtask.title}`} className="rounded-lg p-1.5 text-slate-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /></button></li>)}</ul>}<form onSubmit={submitSubtask} className="mt-3 flex gap-2"><input value={subtaskTitle} onChange={(event) => setSubtaskTitle(event.target.value)} maxLength={180} placeholder="Add a subtask…" aria-label={`New subtask for ${task.title}`} className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-500" /><button type="submit" disabled={busyId !== null || !subtaskTitle.trim()} className="inline-flex items-center gap-1 rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white disabled:opacity-40"><Plus className="h-3.5 w-3.5" />{busyId === "new-subtask" ? "Adding…" : "Add"}</button></form></section>}
+          {task.kind === "task" && <section className="rounded-2xl border border-slate-200 p-3"><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><ListChecks className="h-4 w-4 text-slate-400" /><p className="text-xs font-bold uppercase tracking-wider text-slate-400">Subtasks</p></div><span className="text-xs font-bold text-slate-400">{completedSubtasks}/{task.subtasks.length}</span></div><p className="mt-2 text-xs leading-5 text-slate-500">Break this task into smaller steps and check each one off here.</p>{task.subtasks.length > 0 && <ul className="mt-3 space-y-1">{task.subtasks.map((subtask) => <li key={subtask.id} className="flex items-center gap-2 rounded-xl px-1 py-1.5 hover:bg-slate-50"><button type="button" disabled={busyId !== null} onClick={() => void runMutation(subtask.id, () => toggleSubtask(task.id, subtask.id, !subtask.is_completed))} aria-label={`${subtask.is_completed ? "Reopen" : "Complete"} subtask ${subtask.title}`} style={subtask.is_completed ? { backgroundColor: taskColor, borderColor: taskColor } : undefined} className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${subtask.is_completed ? "text-white" : "border-slate-300 bg-white text-transparent"} disabled:opacity-50`}><Check className="h-3.5 w-3.5" /></button><span className={`min-w-0 flex-1 text-sm ${subtask.is_completed ? "text-slate-400 line-through" : "text-slate-700"}`}>{subtask.title}</span><button type="button" disabled={busyId !== null} onClick={() => void runMutation(`delete-${subtask.id}`, () => deleteSubtask(task.id, subtask.id))} aria-label={`Delete subtask ${subtask.title}`} className="rounded-lg p-1.5 text-slate-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /></button></li>)}</ul>}<form onSubmit={submitSubtask} className="mt-3 flex gap-2"><input value={subtaskTitle} onChange={(event) => setSubtaskTitle(event.target.value)} maxLength={180} placeholder="Add a subtask…" aria-label={`New subtask for ${task.title}`} className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-500" /><button type="submit" disabled={busyId !== null || !subtaskTitle.trim()} className="inline-flex items-center gap-1 rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white disabled:opacity-40"><Plus className="h-3.5 w-3.5" />{busyId === "new-subtask" ? "Adding…" : "Add"}</button></form></section>}
           {error && <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p>}
         </div>
       </div>
@@ -127,14 +133,14 @@ export function TaskEditorModal({ state, scopeCategory, seriesCount, onClose, on
   onDelete: (scope: "one" | "all") => Promise<string | null>;
 }) {
   const existing = state.task;
-  const { colors } = useCategoryColors();
+  const { colors, classes, unassignedColor } = useCategoryColors();
   const [title, setTitle] = useState(existing?.title ?? "");
   const [date, setDate] = useState(existing?.due_date ?? state.date ?? "");
   const [time, setTime] = useState(toTimeInputValue(existing?.due_time ?? null));
   const [endTime, setEndTime] = useState(toTimeInputValue(existing?.end_time ?? null));
   const [kind, setKind] = useState<TaskKind>(existing?.kind ?? "task");
-  const [shade, setShade] = useState<TaskShade>(existing?.color_shade ?? 3);
   const [category, setCategory] = useState<TaskCategory>(scopeCategory ?? existing?.category ?? "classes");
+  const [classId, setClassId] = useState<string | null>(existing?.class_id ?? null);
   const [pinned, setPinned] = useState(existing?.is_pinned ?? false);
   const [completed, setCompleted] = useState(existing?.is_completed ?? false);
   const [location, setLocation] = useState(existing?.location ?? "");
@@ -145,6 +151,10 @@ export function TaskEditorModal({ state, scopeCategory, seriesCount, onClose, on
   const [error, setError] = useState<string | null>(null);
   const isSeries = Boolean(existing?.series_id);
   const convertingTaskToEvent = existing?.kind === "task" && kind === "event";
+  const targetCategory = scopeCategory ?? category;
+  const previewColor = targetCategory === "classes"
+    ? classes.find((calendarClass) => calendarClass.id === classId)?.color ?? unassignedColor
+    : resolveTaskColor(colors, classes, unassignedColor, { category: targetCategory, class_id: null });
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -152,11 +162,12 @@ export function TaskEditorModal({ state, scopeCategory, seriesCount, onClose, on
     setBusy(true); setError(null);
     const result = await onSave({
       title: title.trim(), description: description.trim() || null, due_date: date || null,
-      due_time: fromTimeInputValue(time), category: scopeCategory ?? category,
+      due_time: fromTimeInputValue(time), category: targetCategory,
+      class_id: targetCategory === "classes" ? classId : null,
       location: kind === "event" ? location.trim() || null : null,
       course_code: existing?.course_code ?? null, is_pinned: pinned,
       is_completed: kind === "event" ? false : completed,
-      source: existing?.source ?? "manual", kind, color_shade: shade,
+      source: existing?.source ?? "manual", kind, color_shade: 3,
       canvas_uid: existing?.canvas_uid ?? null, end_time: kind === "event" ? fromTimeInputValue(endTime) : null,
       series_id: existing?.series_id ?? null, recurrence_rule: existing?.recurrence_rule ?? null,
       series_until: existing?.series_until ?? null, import_batch_id: existing?.import_batch_id ?? null,
@@ -178,13 +189,13 @@ export function TaskEditorModal({ state, scopeCategory, seriesCount, onClose, on
       <div role="dialog" aria-modal="true" aria-labelledby="task-editor-title" className="max-h-[94vh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-3xl sm:p-6">
         <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">{existing ? "Quick edit" : "New calendar item"}</p><h2 id="task-editor-title" className="mt-1 text-xl font-bold text-slate-950">{existing ? existing.title : "Add something to the calendar"}</h2></div><button type="button" onClick={onClose} disabled={busy} aria-label="Close task editor" className="rounded-full p-2 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button></div>
         <form onSubmit={submit} className="mt-5 space-y-4">
-          <fieldset><legend className="text-sm font-semibold text-slate-700">Item type</legend><div className="mt-2 grid grid-cols-2 gap-2">{(["task", "event"] as const).map((value) => <button key={value} type="button" onClick={() => setKind(value)} aria-pressed={kind === value} className={`rounded-xl border p-3 text-left transition ${kind === value ? "border-slate-950 bg-slate-50 ring-1 ring-slate-950" : "border-slate-200 bg-white"}`}><span style={itemColorStyle(colors, scopeCategory ?? category, shade, value)} className={`block h-6 rounded-md ${value === "event" ? "border-l-4" : ""}`} /><span className="mt-2 block text-sm font-bold capitalize text-slate-900">{value}</span><span className="mt-0.5 block text-xs text-slate-500">{value === "task" ? "Solid color · completion and subtasks" : "Light card · time and location"}</span></button>)}</div>{convertingTaskToEvent && Boolean(existing?.subtasks.length) && <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-800">Converting this task to an event will remove its {existing?.subtasks.length} subtask{existing?.subtasks.length === 1 ? "" : "s"} when you save.</p>}</fieldset>
+          <fieldset><legend className="text-sm font-semibold text-slate-700">Item type</legend><div className="mt-2 grid grid-cols-2 gap-2">{(["task", "event"] as const).map((value) => <button key={value} type="button" onClick={() => setKind(value)} aria-pressed={kind === value} className={`rounded-xl border p-3 text-left transition ${kind === value ? "border-slate-950 bg-slate-50 ring-1 ring-slate-950" : "border-slate-200 bg-white"}`}><span style={solidItemColorStyle(previewColor, value)} className={`block h-6 rounded-md ${value === "event" ? "border-l-4" : ""}`} /><span className="mt-2 block text-sm font-bold capitalize text-slate-900">{value}</span><span className="mt-0.5 block text-xs text-slate-500">{value === "task" ? "Solid color · completion and subtasks" : "Light card · time and location"}</span></button>)}</div>{convertingTaskToEvent && Boolean(existing?.subtasks.length) && <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-800">Converting this task to an event will remove its {existing?.subtasks.length} subtask{existing?.subtasks.length === 1 ? "" : "s"} when you save.</p>}</fieldset>
           <label className="block"><span className="text-sm font-semibold text-slate-700">Title</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-950 focus:ring-4 focus:ring-slate-100" /></label>
           <div className={`grid gap-3 ${kind === "event" ? "grid-cols-2 sm:grid-cols-3" : "grid-cols-2"}`}><label className={kind === "event" ? "col-span-2 sm:col-span-1" : ""}><span className="text-sm font-semibold text-slate-700">Date</span><input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label><label><span className="text-sm font-semibold text-slate-700">{kind === "event" ? "Starts" : "Time"}</span><input type="time" value={time} onChange={(event) => setTime(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label>{kind === "event" && <label><span className="text-sm font-semibold text-slate-700">Ends</span><input type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label>}</div>
           {kind === "event" && <label className="block"><span className="text-sm font-semibold text-slate-700">Location</span><input value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Room, building, or link" className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm" /></label>}
           <label className="block"><span className="text-sm font-semibold text-slate-700">Notes</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="Add details or preparation notes" className="mt-1.5 w-full resize-y rounded-xl border border-slate-300 px-3 py-2.5 text-sm leading-6" /></label>
-          <div><span className="text-sm font-semibold text-slate-700">Category</span>{scopeCategory ? <div style={categorySoftStyle(colors, scopeCategory)} className="mt-1.5 inline-flex rounded-full px-3 py-1.5 text-sm font-semibold">{CATEGORY_STYLES[scopeCategory].label}</div> : <select value={category} onChange={(event) => setCategory(event.target.value as TaskCategory)} className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm">{CATEGORY_ORDER.map((item) => <option key={item} value={item}>{CATEGORY_STYLES[item].label}</option>)}</select>}</div>
-          <fieldset><legend className="text-sm font-semibold text-slate-700">Color shade</legend><div className="mt-2 grid grid-cols-5 gap-2">{([1, 2, 3, 4, 5] as const).map((value) => <button key={value} type="button" onClick={() => setShade(value)} aria-label={`Shade ${value}`} aria-pressed={shade === value} className={`h-10 rounded-xl border-2 transition ${shade === value ? "border-slate-950 ring-2 ring-slate-300" : "border-white"}`} style={itemColorStyle(colors, scopeCategory ?? category, value, kind)} />)}</div></fieldset>
+          <div><span className="text-sm font-semibold text-slate-700">Category</span>{scopeCategory ? <div style={targetCategory === "classes" ? solidSoftStyle(previewColor) : categorySoftStyle(colors, scopeCategory)} className="mt-1.5 inline-flex rounded-full border-l-2 px-3 py-1.5 text-sm font-semibold">{CATEGORY_STYLES[scopeCategory].label}</div> : <select value={category} onChange={(event) => setCategory(event.target.value as TaskCategory)} className="mt-1.5 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm">{CATEGORY_ORDER.map((item) => <option key={item} value={item}>{CATEGORY_STYLES[item].label}</option>)}</select>}</div>
+          {targetCategory === "classes" && <ClassSelectField value={classId} onChange={setClassId} label="Class (optional)" />}
           <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setPinned((value) => !value)} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${pinned ? "border-amber-300 bg-amber-50 text-amber-800" : "border-slate-200 text-slate-600"}`}><Pin className={`h-4 w-4 ${pinned ? "fill-current" : ""}`} />Pinned</button>{kind !== "event" && <button type="button" onClick={() => setCompleted((value) => !value)} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${completed ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-slate-200 text-slate-600"}`}><Check className="h-4 w-4" />Completed</button>}</div>
           {isSeries && <fieldset className="rounded-2xl border border-violet-200 bg-violet-50 p-3"><legend className="px-1 text-sm font-bold text-violet-950">Apply to</legend><div className="mt-2 grid grid-cols-2 gap-2">{(["one", "all"] as const).map((value) => <label key={value} className={`cursor-pointer rounded-xl border p-3 text-sm ${scope === value ? "border-violet-500 bg-white font-semibold text-violet-950" : "border-transparent text-violet-700"}`}><input type="radio" name="series-scope" value={value} checked={scope === value} onChange={() => setScope(value)} className="mr-2 accent-violet-600" />{value === "one" ? "This occurrence" : `All ${seriesCount} occurrences`}</label>)}</div><p className="mt-2 text-xs text-violet-700">Editing one occurrence detaches it from future series updates.</p></fieldset>}
           {error && <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p>}
@@ -201,8 +212,11 @@ export function TaskEditorModal({ state, scopeCategory, seriesCount, onClose, on
 export function CalendarGrid({ tasks, scopeCategory, variant = "full", defaultView, onTasksChange }: CalendarGridProps) {
   const fallbackView = defaultView ?? "month";
   const [view, setView] = useState<CalendarView>(fallbackView);
-  const todayKey = toLocalDateString(new Date());
-  const [anchor, setAnchor] = useState(() => parseCalendarDate(todayKey));
+  const [todayKey, setTodayKey] = useState<string | null>(null);
+  const [anchor, setAnchor] = useState<Date | null>(null);
+  const todayKeyRef = useRef<string | null>(null);
+  const browserDateReady = useRef(false);
+  const followingToday = useRef(true);
   const [localTasks, setLocalTasks] = useState(tasks);
   const [previousTasks, setPreviousTasks] = useState(tasks);
   const [editor, setEditor] = useState<EditorState>(null);
@@ -244,6 +258,34 @@ export function CalendarGrid({ tasks, scopeCategory, variant = "full", defaultVi
     };
   }, [fallbackView]);
 
+  useEffect(() => {
+    const refreshToday = () => {
+      const nextToday = toDeviceDateString(new Date());
+      const dateChanged = todayKeyRef.current !== null && todayKeyRef.current !== nextToday;
+      todayKeyRef.current = nextToday;
+      setTodayKey(nextToday);
+      if (!browserDateReady.current || (dateChanged && followingToday.current)) {
+        setAnchor(parseCalendarDate(nextToday));
+      }
+      browserDateReady.current = true;
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") refreshToday();
+    };
+    const startupTimer = window.setTimeout(refreshToday, 0);
+    const refreshInterval = window.setInterval(refreshToday, 60_000);
+    window.addEventListener("focus", refreshToday);
+    window.addEventListener("pageshow", refreshToday);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.clearTimeout(startupTimer);
+      window.clearInterval(refreshInterval);
+      window.removeEventListener("focus", refreshToday);
+      window.removeEventListener("pageshow", refreshToday);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, []);
+
   const changeView = (nextView: CalendarView) => {
     setView(nextView);
     try {
@@ -271,14 +313,29 @@ export function CalendarGrid({ tasks, scopeCategory, variant = "full", defaultVi
     return map;
   }, [scopedTasks]);
   const unscheduled = useMemo(() => scopedTasks.filter((task) => !task.due_date), [scopedTasks]);
+  const effectiveAnchor = anchor ?? CALENDAR_LOADING_DATE;
   const days = useMemo(() => {
-    const start = view === "month" ? startOfWeek(startOfMonth(anchor), { weekStartsOn: 0 }) : startOfWeek(anchor, { weekStartsOn: 0 });
+    const start = view === "month" ? startOfWeek(startOfMonth(effectiveAnchor), { weekStartsOn: 0 }) : startOfWeek(effectiveAnchor, { weekStartsOn: 0 });
     const end = view === "month" ? addDays(start, 41) : endOfWeek(start, { weekStartsOn: 0 });
     return eachDayOfInterval({ start, end });
-  }, [anchor, view]);
+  }, [effectiveAnchor, view]);
   const monthVisibleLimit = variant === "compact" ? 2 : 3;
 
-  const navigate = (direction: -1 | 1) => setAnchor((current) => view === "month" ? (direction < 0 ? subMonths(current, 1) : addMonths(current, 1)) : (direction < 0 ? subWeeks(current, 1) : addWeeks(current, 1)));
+  const navigate = (direction: -1 | 1) => {
+    followingToday.current = false;
+    setAnchor((current) => {
+      const activeAnchor = current ?? parseCalendarDate(toDeviceDateString(new Date()));
+      return view === "month" ? (direction < 0 ? subMonths(activeAnchor, 1) : addMonths(activeAnchor, 1)) : (direction < 0 ? subWeeks(activeAnchor, 1) : addWeeks(activeAnchor, 1));
+    });
+  };
+
+  const goToToday = () => {
+    const nextToday = toDeviceDateString(new Date());
+    followingToday.current = true;
+    todayKeyRef.current = nextToday;
+    setTodayKey(nextToday);
+    setAnchor(parseCalendarDate(nextToday));
+  };
 
   const saveTask = async (draft: TaskDraft, scope: "one" | "all"): Promise<string | null> => {
     setMutationError(null);
@@ -316,13 +373,17 @@ export function CalendarGrid({ tasks, scopeCategory, variant = "full", defaultVi
     return null;
   };
 
+  if (!anchor || !todayKey) {
+    return <section aria-busy="true" aria-label="Loading calendar" className="flex min-h-80 items-center justify-center rounded-3xl border border-slate-200 bg-white text-sm font-semibold text-slate-400 shadow-sm">Loading calendar…</section>;
+  }
+
   const periodLabel = view === "month" ? format(anchor, "MMMM yyyy") : `${format(days[0], "MMM d")} – ${format(days.at(-1)!, "MMM d, yyyy")}`;
   return (
     <section className={`overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm ${variant === "compact" ? "text-sm" : ""}`}>
       <header className="flex flex-col gap-4 border-b border-slate-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div><p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Calendar</p><h2 className="mt-1 text-xl font-bold tracking-tight text-slate-950">{periodLabel}</h2></div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center rounded-xl border border-slate-200 p-1"><button type="button" onClick={() => navigate(-1)} aria-label={`Previous ${view}`} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><ChevronLeft className="h-4 w-4" /></button><button type="button" onClick={() => setAnchor(parseCalendarDate(todayKey))} className="rounded-lg px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100">Today</button><button type="button" onClick={() => navigate(1)} aria-label={`Next ${view}`} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><ChevronRight className="h-4 w-4" /></button></div>
+          <div className="flex items-center rounded-xl border border-slate-200 p-1"><button type="button" onClick={() => navigate(-1)} aria-label={`Previous ${view}`} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><ChevronLeft className="h-4 w-4" /></button><button type="button" onClick={goToToday} className="rounded-lg px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100">Today</button><button type="button" onClick={() => navigate(1)} aria-label={`Next ${view}`} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><ChevronRight className="h-4 w-4" /></button></div>
           <div className="flex rounded-xl bg-slate-100 p-1" aria-label="Calendar view">{(["month", "week"] as const).map((item) => <button key={item} type="button" onClick={() => changeView(item)} aria-pressed={view === item} className={`rounded-lg px-3 py-2 text-xs font-bold capitalize ${view === item ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"}`}>{item}</button>)}</div>
         </div>
       </header>

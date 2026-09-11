@@ -13,6 +13,7 @@ export interface Subtask {
 
 export interface Task {
   id: string;
+  class_id: string | null;
   canvas_uid: string | null;
   title: string;
   description: string | null;
@@ -36,7 +37,8 @@ export interface Task {
   updated_at: string;
 }
 
-export type NewTask = Omit<Task, "id" | "created_at" | "updated_at" | "subtasks" | "location"> & {
+export type NewTask = Omit<Task, "id" | "created_at" | "updated_at" | "subtasks" | "location" | "class_id"> & {
+  class_id?: string | null;
   subtasks?: Subtask[];
   location?: string | null;
 };
@@ -47,6 +49,7 @@ export interface RecurrenceSpec {
   description?: string | null;
   location?: string | null;
   category: TaskCategory;
+  classId?: string | null;
   courseCode: string | null;
   kind: TaskKind;
   colorShade: TaskShade;

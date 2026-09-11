@@ -1,11 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { normalizeCalendarColor } from "@/lib/calendarColors";
 import { applyLocalPreferences, readLocalPreferences, type LocalPreferences } from "@/lib/preferences";
+import type { CalendarClass } from "@/types/calendarClass";
 import type { Subtask, Task } from "@/types/task";
 
 type RemoteCalendarItem = Omit<Task, "subtasks"> & {
   user_id: string;
   revision: number;
   deleted_at: string | null;
+};
+
+type RemoteCalendarClass = CalendarClass & {
+  user_id: string;
+  revision: number;
 };
 
 type RemoteSubtask = Subtask & {
@@ -25,6 +32,7 @@ type RemoteSettings = {
   classes_workspace_view: LocalPreferences["workspaceViews"]["classes"];
   orgs_workspace_view: LocalPreferences["workspaceViews"]["orgs"];
   social_workspace_view: LocalPreferences["workspaceViews"]["social"];
+  unassigned_color: string;
   local_migration_completed_at: string | null;
   revision: number;
 };
@@ -35,6 +43,8 @@ export interface CloudSyncCheckpoint {
   taskRevisions: Record<string, number>;
   subtaskHashes: Record<string, string>;
   subtaskRevisions: Record<string, number>;
+  classHashes: Record<string, string>;
+  classRevisions: Record<string, number>;
   settingsHash: string | null;
   settingsRevision: number | null;
   lastSuccessfulAt: string;
@@ -46,6 +56,8 @@ export interface CloudSyncResult {
   uploaded: number;
   downloaded: number;
   preferences: LocalPreferences;
+  classes: CalendarClass[];
+  unassignedColor: string;
 }
 
 type MergeDecision = "upload" | "download" | "delete_remote" | "deleted";
@@ -75,7 +87,7 @@ function taskHash(task: Task): string {
     task.canvas_uid, task.title, task.description, task.due_date, task.due_time, task.location,
     task.category, task.course_code, task.is_pinned, task.is_completed, task.source, task.kind,
     task.color_shade, task.end_time, task.series_id, task.recurrence_rule, task.series_until,
-    task.import_batch_id,
+    task.import_batch_id, task.class_id,
   ]));
 }
 
@@ -83,7 +95,16 @@ function subtaskHash(subtask: Subtask, parentId: string): string {
   return compactHash(JSON.stringify([parentId, subtask.title, subtask.is_completed]));
 }
 
-function preferencesHash(preferences: LocalPreferences): string {
+function classHash(calendarClass: CalendarClass): string {
+  return compactHash(JSON.stringify([
+    calendarClass.name,
+    calendarClass.course_code,
+    calendarClass.aliases,
+    calendarClass.color,
+  ]));
+}
+
+function preferencesHash(preferences: LocalPreferences, unassignedColor = "#64748B"): string {
   return compactHash(JSON.stringify([
     preferences.colors.classes,
     preferences.colors.orgs,
@@ -92,6 +113,7 @@ function preferencesHash(preferences: LocalPreferences): string {
     preferences.workspaceViews.classes,
     preferences.workspaceViews.orgs,
     preferences.workspaceViews.social,
+    unassignedColor,
   ]));
 }
 
@@ -135,7 +157,9 @@ function chooseVersion({
   return asTimestamp(localUpdatedAt) >= asTimestamp(remote.updated_at) ? "upload" : "download";
 }
 
-async function fetchAllRows<T>(supabase: SupabaseClient, table: "calendar_items" | "subtasks"): Promise<T[]> {
+type SyncTable = "calendar_items" | "subtasks" | "calendar_classes";
+
+async function fetchAllRows<T>(supabase: SupabaseClient, table: SyncTable): Promise<T[]> {
   const rows: T[] = [];
   let afterId: string | null = null;
   for (;;) {
@@ -176,7 +200,35 @@ function taskUpdatePayload(task: Task) {
     recurrence_rule: task.recurrence_rule,
     series_until: task.series_until,
     import_batch_id: task.import_batch_id,
+    class_id: task.class_id,
     deleted_at: null,
+  };
+}
+
+function classInsertPayload(calendarClass: CalendarClass, userId: string) {
+  return { id: calendarClass.id, user_id: userId, ...classUpdatePayload(calendarClass) };
+}
+
+function classUpdatePayload(calendarClass: CalendarClass) {
+  return {
+    name: calendarClass.name,
+    course_code: calendarClass.course_code,
+    aliases: calendarClass.aliases,
+    color: calendarClass.color,
+    deleted_at: null,
+  };
+}
+
+function remoteClassToLocal(row: RemoteCalendarClass): CalendarClass {
+  return {
+    id: row.id,
+    name: row.name,
+    course_code: row.course_code,
+    aliases: row.aliases,
+    color: row.color,
+    deleted_at: row.deleted_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
   };
 }
 
@@ -196,6 +248,7 @@ function subtaskUpdatePayload(subtask: Subtask, parentId: string) {
 function remoteTaskToLocal(row: RemoteCalendarItem): Task {
   return {
     id: row.id,
+    class_id: row.class_id,
     canvas_uid: row.canvas_uid,
     title: row.title,
     description: row.description,
@@ -232,7 +285,7 @@ function remotePreferences(row: RemoteSettings): LocalPreferences {
   };
 }
 
-function settingsPayload(preferences: LocalPreferences) {
+function settingsPayload(preferences: LocalPreferences, unassignedColor: string) {
   return {
     classes_color: preferences.colors.classes,
     orgs_color: preferences.colors.orgs,
@@ -241,11 +294,12 @@ function settingsPayload(preferences: LocalPreferences) {
     classes_workspace_view: preferences.workspaceViews.classes,
     orgs_workspace_view: preferences.workspaceViews.orgs,
     social_workspace_view: preferences.workspaceViews.social,
+    unassigned_color: unassignedColor,
     local_migration_completed_at: new Date().toISOString(),
   };
 }
 
-async function insertInBatches(supabase: SupabaseClient, table: "calendar_items" | "subtasks", rows: Record<string, unknown>[]) {
+async function insertInBatches(supabase: SupabaseClient, table: SyncTable, rows: Record<string, unknown>[]) {
   for (let index = 0; index < rows.length; index += WRITE_BATCH_SIZE) {
     const { error } = await supabase.from(table).insert(rows.slice(index, index + WRITE_BATCH_SIZE));
     if (error) throw new Error(`Cloud ${table.replace("_", " ")} could not be created: ${error.message}`);
@@ -254,7 +308,7 @@ async function insertInBatches(supabase: SupabaseClient, table: "calendar_items"
 
 async function updateRows(
   supabase: SupabaseClient,
-  table: "calendar_items" | "subtasks",
+  table: SyncTable,
   rows: Array<{ id: string; payload: Record<string, unknown> }>,
 ) {
   for (let index = 0; index < rows.length; index += UPDATE_CONCURRENCY) {
@@ -265,7 +319,7 @@ async function updateRows(
   }
 }
 
-async function softDeleteRows(supabase: SupabaseClient, table: "calendar_items" | "subtasks", ids: string[]) {
+async function softDeleteRows(supabase: SupabaseClient, table: SyncTable, ids: string[]) {
   const deletedAt = new Date().toISOString();
   for (let index = 0; index < ids.length; index += WRITE_BATCH_SIZE) {
     const { error } = await supabase.from(table).update({ deleted_at: deletedAt }).in("id", ids.slice(index, index + WRITE_BATCH_SIZE));
@@ -273,11 +327,70 @@ async function softDeleteRows(supabase: SupabaseClient, table: "calendar_items" 
   }
 }
 
+async function syncClasses(
+  supabase: SupabaseClient,
+  userId: string,
+  localClasses: CalendarClass[],
+  checkpoint: CloudSyncCheckpoint | null,
+): Promise<{ classes: CalendarClass[]; hashes: Record<string, string>; revisions: Record<string, number>; uploaded: number; downloaded: number }> {
+  const remoteRows = await fetchAllRows<RemoteCalendarClass>(supabase, "calendar_classes");
+  const remoteClasses = remoteRows.filter((row) => row.user_id === userId);
+  if (remoteClasses.length !== remoteRows.length) throw new Error("Cloud class ownership verification failed.");
+
+  const localMap = new Map(localClasses.map((calendarClass) => [calendarClass.id, calendarClass]));
+  const remoteMap = new Map(remoteClasses.map((calendarClass) => [calendarClass.id, calendarClass]));
+  const ids = new Set([...localMap.keys(), ...remoteMap.keys()]);
+  const inserts: Record<string, unknown>[] = [];
+  const updates: Array<{ id: string; payload: Record<string, unknown> }> = [];
+  const deletes: string[] = [];
+  let uploaded = 0;
+  let downloaded = 0;
+
+  for (const id of ids) {
+    const localRow = localMap.get(id) ?? null;
+    const local = localRow && !localRow.deleted_at ? localRow : null;
+    const remote = remoteMap.get(id) ?? null;
+    const decision = chooseVersion({
+      localHash: local ? classHash(local) : null,
+      localUpdatedAt: localRow?.updated_at ?? null,
+      remote,
+      checkpointHash: checkpoint?.classHashes[id],
+      checkpointRevision: checkpoint?.classRevisions[id],
+    });
+    if (decision === "upload" && local) {
+      if (remote) updates.push({ id, payload: classUpdatePayload(local) });
+      else inserts.push(classInsertPayload(local, userId));
+      uploaded += 1;
+    } else if (decision === "download" && remote && !remote.deleted_at) {
+      downloaded += 1;
+    } else if (decision === "delete_remote" && remote && !remote.deleted_at) {
+      deletes.push(id);
+      uploaded += 1;
+    }
+  }
+
+  await insertInBatches(supabase, "calendar_classes", inserts);
+  await updateRows(supabase, "calendar_classes", updates);
+  await softDeleteRows(supabase, "calendar_classes", [...new Set(deletes)]);
+
+  const finalRowsRaw = await fetchAllRows<RemoteCalendarClass>(supabase, "calendar_classes");
+  const finalRows = finalRowsRaw.filter((row) => row.user_id === userId);
+  if (finalRows.length !== finalRowsRaw.length) throw new Error("Cloud class ownership verification failed after synchronization.");
+  const hashes: Record<string, string> = {};
+  const revisions: Record<string, number> = {};
+  for (const row of finalRows) {
+    revisions[row.id] = row.revision;
+    if (!row.deleted_at) hashes[row.id] = classHash(remoteClassToLocal(row));
+  }
+  return { classes: finalRows.map(remoteClassToLocal), hashes, revisions, uploaded, downloaded };
+}
+
 async function syncPreferences(
   supabase: SupabaseClient,
   userId: string,
   checkpoint: CloudSyncCheckpoint | null,
-): Promise<{ preferences: LocalPreferences; revision: number }> {
+  localUnassignedColor: string,
+): Promise<{ preferences: LocalPreferences; unassignedColor: string; revision: number }> {
   const local = readLocalPreferences();
   const { data, error } = await supabase.from("user_settings").select("*").maybeSingle();
   if (error) throw new Error(`Cloud preferences could not be read: ${error.message}`);
@@ -286,15 +399,15 @@ async function syncPreferences(
   if (!remote) {
     const { data: inserted, error: insertError } = await supabase
       .from("user_settings")
-      .insert({ user_id: userId, ...settingsPayload(local) })
+      .insert({ user_id: userId, ...settingsPayload(local, localUnassignedColor) })
       .select("*")
       .single();
     if (insertError) throw new Error(`Cloud preferences could not be created: ${insertError.message}`);
-    return { preferences: local, revision: (inserted as RemoteSettings).revision };
+    return { preferences: local, unassignedColor: localUnassignedColor, revision: (inserted as RemoteSettings).revision };
   }
 
   const localChanged = checkpoint?.settingsHash !== undefined && checkpoint.settingsHash !== null
-    ? checkpoint.settingsHash !== preferencesHash(local)
+    ? checkpoint.settingsHash !== preferencesHash(local, localUnassignedColor)
     : false;
   const remoteChanged = checkpoint?.settingsRevision !== undefined && checkpoint.settingsRevision !== null
     ? checkpoint.settingsRevision !== remote.revision
@@ -303,30 +416,40 @@ async function syncPreferences(
   if (localChanged) {
     const { data: updated, error: updateError } = await supabase
       .from("user_settings")
-      .update(settingsPayload(local))
+      .update(settingsPayload(local, localUnassignedColor))
       .eq("user_id", userId)
       .select("*")
       .single();
     if (updateError) throw new Error(`Cloud preferences could not be updated: ${updateError.message}`);
-    return { preferences: local, revision: (updated as RemoteSettings).revision };
+    return { preferences: local, unassignedColor: localUnassignedColor, revision: (updated as RemoteSettings).revision };
   }
 
   const selected = remoteChanged || !checkpoint ? remotePreferences(remote) : local;
   if (preferencesHash(selected) !== preferencesHash(local)) applyLocalPreferences(selected);
-  return { preferences: selected, revision: remote.revision };
+  const remoteUnassignedColor = normalizeCalendarColor(remote.unassigned_color) ?? localUnassignedColor;
+  return {
+    preferences: selected,
+    unassignedColor: remoteChanged || !checkpoint ? remoteUnassignedColor : localUnassignedColor,
+    revision: remote.revision,
+  };
 }
 
 export async function synchronizeCloudCalendar({
   supabase,
   userId,
   localTasks,
+  localClasses,
+  localUnassignedColor,
   checkpoint,
 }: {
   supabase: SupabaseClient;
   userId: string;
   localTasks: Task[];
+  localClasses: CalendarClass[];
+  localUnassignedColor: string;
   checkpoint: CloudSyncCheckpoint | null;
 }): Promise<CloudSyncResult> {
+  const classResult = await syncClasses(supabase, userId, localClasses, checkpoint);
   const [remoteTasksRaw, remoteSubtasksRaw] = await Promise.all([
     fetchAllRows<RemoteCalendarItem>(supabase, "calendar_items"),
     fetchAllRows<RemoteSubtask>(supabase, "subtasks"),
@@ -344,8 +467,8 @@ export async function synchronizeCloudCalendar({
   const taskUpdates: Array<{ id: string; payload: Record<string, unknown> }> = [];
   const taskDeletes: string[] = [];
   const survivingTaskIds = new Set<string>();
-  let uploaded = 0;
-  let downloaded = 0;
+  let uploaded = classResult.uploaded;
+  let downloaded = classResult.downloaded;
 
   for (const id of taskIds) {
     const local = localTaskMap.get(id) ?? null;
@@ -415,7 +538,7 @@ export async function synchronizeCloudCalendar({
   await softDeleteRows(supabase, "subtasks", [...new Set(subtaskDeletes)]);
   await softDeleteRows(supabase, "calendar_items", [...new Set(taskDeletes)]);
 
-  const preferenceResult = await syncPreferences(supabase, userId, checkpoint);
+  const preferenceResult = await syncPreferences(supabase, userId, checkpoint, localUnassignedColor);
   const [finalRemoteTasksRaw, finalRemoteSubtasksRaw] = await Promise.all([
     fetchAllRows<RemoteCalendarItem>(supabase, "calendar_items"),
     fetchAllRows<RemoteSubtask>(supabase, "subtasks"),
@@ -460,11 +583,21 @@ export async function synchronizeCloudCalendar({
     taskRevisions,
     subtaskHashes,
     subtaskRevisions,
-    settingsHash: preferencesHash(preferenceResult.preferences),
+    classHashes: classResult.hashes,
+    classRevisions: classResult.revisions,
+    settingsHash: preferencesHash(preferenceResult.preferences, preferenceResult.unassignedColor),
     settingsRevision: preferenceResult.revision,
     lastSuccessfulAt: new Date().toISOString(),
   };
-  return { tasks, checkpoint: nextCheckpoint, uploaded, downloaded, preferences: preferenceResult.preferences };
+  return {
+    tasks,
+    classes: classResult.classes,
+    unassignedColor: preferenceResult.unassignedColor,
+    checkpoint: nextCheckpoint,
+    uploaded,
+    downloaded,
+    preferences: preferenceResult.preferences,
+  };
 }
 
 export function parseCloudSyncCheckpoint(value: string | null): CloudSyncCheckpoint | null {
@@ -478,6 +611,8 @@ export function parseCloudSyncCheckpoint(value: string | null): CloudSyncCheckpo
       taskRevisions: parsed.taskRevisions && typeof parsed.taskRevisions === "object" ? parsed.taskRevisions : {},
       subtaskHashes: parsed.subtaskHashes && typeof parsed.subtaskHashes === "object" ? parsed.subtaskHashes : {},
       subtaskRevisions: parsed.subtaskRevisions && typeof parsed.subtaskRevisions === "object" ? parsed.subtaskRevisions : {},
+      classHashes: parsed.classHashes && typeof parsed.classHashes === "object" ? parsed.classHashes : {},
+      classRevisions: parsed.classRevisions && typeof parsed.classRevisions === "object" ? parsed.classRevisions : {},
       settingsHash: typeof parsed.settingsHash === "string" ? parsed.settingsHash : null,
       settingsRevision: typeof parsed.settingsRevision === "number" ? parsed.settingsRevision : null,
       lastSuccessfulAt: parsed.lastSuccessfulAt,
@@ -487,4 +622,15 @@ export function parseCloudSyncCheckpoint(value: string | null): CloudSyncCheckpo
   }
 }
 
-export const cloudSyncInternals = { chooseVersion, taskHash, subtaskHash, preferencesHash };
+export const cloudSyncInternals = {
+  chooseVersion,
+  taskHash,
+  subtaskHash,
+  classHash,
+  preferencesHash,
+  taskInsertPayload,
+  taskUpdatePayload,
+  classInsertPayload,
+  classUpdatePayload,
+  remoteClassToLocal,
+};
