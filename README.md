@@ -4,13 +4,13 @@ Universal Dashboard is a private, local-first calendar for coursework, student o
 
 ## Privacy model
 
-Calendar data is saved locally first using IndexedDB, with a localStorage fallback. After Google sign-in, tasks, events, subtasks, classes, class assignments, category colors, and calendar view preferences are backed up to the user's private Supabase rows when they sign in, reconnect, request a manual backup, and every three hours.
+Calendar data is saved locally first using IndexedDB, with a localStorage fallback. After Google sign-in, tasks, events, subtasks, category colors, and calendar view preferences are backed up to the user's private Supabase rows when they sign in, reconnect, request a manual backup, and every three hours.
 
 Signed-in users can recover their cloud-backed calendar after clearing browser site data by signing in again. **Backup details** shows the latest successful cloud backup, the local item count, and a manual retry control. Signed-out users should download JSON backups regularly with **Export data** and restore them through **Classes → Import syllabus → JSON backup**.
 
 Google sessions persist in secure browser cookies and refresh automatically, so closing and reopening a tab does not sign the user out. Explicit sign-out clears the current browser session.
 
-JSON backups are versioned and include every category, task, event, subtask, class, class assignment, calendar color, calendar view, and category workspace view. Restoring merges by stable item identity, keeps newer local changes, and does not erase the existing calendar. Version 2 and legacy task-array backups remain supported; their Classes items open safely as Unassigned until organized.
+JSON backups are versioned and include every category, task, event, subtask, calendar color, calendar view, and category workspace view. Restoring merges by stable item identity, keeps newer local changes, and does not erase the existing calendar. Version 2 and legacy task-array backups remain supported.
 
 Supabase provides authentication and the RLS-protected cloud schema. Every query is additionally checked against the signed-in user ID by Postgres Row Level Security. Deletes are synchronized as recoverable tombstones rather than hard-deleting rows from browser clients. The publishable key is safe for the browser because it cannot bypass RLS. The Supabase secret key and database URL are server-only and must never be prefixed with `NEXT_PUBLIC_` or exposed to browser code.
 
@@ -20,7 +20,7 @@ A browser calendar is bound to the first Google account used to back it up. If a
 
 - Month and expanded week calendar views.
 - Classes, organizations, and social workspaces.
-- Per-class colors with optional class assignment and an Unassigned fallback.
+- Custom colors for Classes, Orgs, and Social, with five shades available for individual tasks and events.
 - Tasks and events with alternate display styles.
 - Subtasks with independent completion.
 - Recurring semester schedules.

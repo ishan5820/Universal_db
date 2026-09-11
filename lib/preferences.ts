@@ -43,11 +43,8 @@ export function normalizeCategoryColors(value: unknown): CategoryColors {
   if (!value || typeof value !== "object") return DEFAULT_CATEGORY_COLORS;
   const input = value as Partial<Record<TaskCategory, unknown>>;
   const result = { ...DEFAULT_CATEGORY_COLORS };
-  if (typeof input.classes === "string" && COLOR_IDS.has(input.classes as CategoryColorId)) {
-    result.classes = input.classes as CategoryColorId;
-  }
   const used = new Set<CategoryColorId>();
-  for (const category of ["orgs", "social"] as const) {
+  for (const category of CATEGORIES) {
     const requested = input[category];
     const preferred = typeof requested === "string" && COLOR_IDS.has(requested as CategoryColorId)
       ? requested as CategoryColorId

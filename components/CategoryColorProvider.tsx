@@ -1,16 +1,12 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { calendarColorText, DEFAULT_UNASSIGNED_CLASS_COLOR } from "@/lib/calendarColors";
-import { getClassRegistry, subscribeClassChanges } from "@/lib/localClasses";
-import type { CalendarClass } from "@/types/calendarClass";
-import type { Task, TaskCategory, TaskShade } from "@/types/task";
+import type { TaskCategory, TaskShade } from "@/types/task";
 import {
   CATEGORY_COLORS_CHANGE_EVENT,
   CATEGORY_COLORS_STORAGE_KEY,
   DEFAULT_CATEGORY_COLORS,
   normalizeCategoryColors,
-  CATEGORY_BASE_COLORS,
   type CategoryColorId,
   type CategoryColors,
 } from "@/lib/preferences";
@@ -40,8 +36,6 @@ function loadColors(): CategoryColors {
 
 interface CategoryColorContextValue {
   colors: CategoryColors;
-  classes: CalendarClass[];
-  unassignedColor: string;
   setCategoryColor: (category: TaskCategory, color: CategoryColorId) => boolean;
 }
 
@@ -49,8 +43,6 @@ const CategoryColorContext = createContext<CategoryColorContextValue | null>(nul
 
 export function CategoryColorProvider({ children }: { children: ReactNode }) {
   const [colors, setColors] = useState<CategoryColors>(DEFAULT_CATEGORY_COLORS);
-  const [classes, setClasses] = useState<CalendarClass[]>([]);
-  const [unassignedColor, setUnassignedColor] = useState(DEFAULT_UNASSIGNED_CLASS_COLOR);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setColors(loadColors()), 0);
@@ -67,23 +59,8 @@ export function CategoryColorProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  useEffect(() => {
-    const loadClasses = async () => {
-      const result = await getClassRegistry();
-      if (!result.ok) return;
-      setClasses(result.classes);
-      setUnassignedColor(result.unassignedColor);
-    };
-    const timer = window.setTimeout(() => void loadClasses(), 0);
-    const unsubscribe = subscribeClassChanges(() => void loadClasses());
-    return () => { window.clearTimeout(timer); unsubscribe(); };
-  }, []);
-
   const setCategoryColor = (category: TaskCategory, color: CategoryColorId): boolean => {
-    if (category === "classes") return false;
-    const otherCategory = category === "orgs" ? "social" : "orgs";
-    const requestedHex = CATEGORY_BASE_COLORS[color];
-    if (colors[otherCategory] === color || unassignedColor === requestedHex || classes.some((calendarClass) => calendarClass.color === requestedHex)) return false;
+    if (Object.entries(colors).some(([key, value]) => key !== category && value === color)) return false;
     const next = { ...colors, [category]: color };
     setColors(next);
     try { window.localStorage.setItem(CATEGORY_COLORS_STORAGE_KEY, JSON.stringify(next)); } catch { /* Use the selection for this session. */ }
@@ -91,7 +68,7 @@ export function CategoryColorProvider({ children }: { children: ReactNode }) {
     return true;
   };
 
-  return <CategoryColorContext.Provider value={{ colors, classes, unassignedColor, setCategoryColor }}>{children}</CategoryColorContext.Provider>;
+  return <CategoryColorContext.Provider value={{ colors, setCategoryColor }}>{children}</CategoryColorContext.Provider>;
 }
 
 export function useCategoryColors(): CategoryColorContextValue {
@@ -101,8 +78,8 @@ export function useCategoryColors(): CategoryColorContextValue {
 }
 
 export function categoryHex(colors: CategoryColors, category: TaskCategory, shade: TaskShade = 3): string {
-  void shade;
-  return CATEGORY_BASE_COLORS[colors[category]];
+  const palette = CATEGORY_COLOR_PALETTES.find((item) => item.id === colors[category]) ?? CATEGORY_COLOR_PALETTES[0];
+  return palette.shades[shade - 1];
 }
 
 export function categoryAccentStyle(colors: CategoryColors, category: TaskCategory): CSSProperties {
@@ -110,30 +87,14 @@ export function categoryAccentStyle(colors: CategoryColors, category: TaskCatego
 }
 
 export function categorySoftStyle(colors: CategoryColors, category: TaskCategory): CSSProperties {
-  const color = categoryHex(colors, category);
-  return { backgroundColor: `${color}1f`, color: "#334155" };
+  const palette = CATEGORY_COLOR_PALETTES.find((item) => item.id === colors[category]) ?? CATEGORY_COLOR_PALETTES[0];
+  return { backgroundColor: `${palette.shades[2]}1f`, color: palette.shades[4] };
 }
 
 export function itemColorStyle(colors: CategoryColors, category: TaskCategory, shade: TaskShade, kind: "task" | "event"): CSSProperties {
-  void shade;
-  return solidItemColorStyle(categoryHex(colors, category), kind);
-}
-
-export function solidItemColorStyle(color: string, kind: "task" | "event"): CSSProperties {
-  if (kind === "event") return { backgroundColor: `${color}1f`, borderColor: color, color: "#334155" };
-  return { backgroundColor: color, color: calendarColorText(color) };
-}
-
-export function solidSoftStyle(color: string): CSSProperties {
-  return { backgroundColor: `${color}1f`, color: "#334155", borderColor: color };
-}
-
-export function resolveTaskColor(colors: CategoryColors, classes: readonly CalendarClass[], unassignedColor: string, task: Pick<Task, "category" | "class_id">): string {
-  if (task.category !== "classes") return categoryHex(colors, task.category);
-  return classes.find((calendarClass) => calendarClass.id === task.class_id)?.color ?? unassignedColor;
-}
-
-export function resolveClassName(classes: readonly CalendarClass[], task: Pick<Task, "category" | "class_id">): string | null {
-  if (task.category !== "classes") return null;
-  return classes.find((calendarClass) => calendarClass.id === task.class_id)?.name ?? "Unassigned";
+  const palette = CATEGORY_COLOR_PALETTES.find((item) => item.id === colors[category]) ?? CATEGORY_COLOR_PALETTES[0];
+  const color = palette.shades[shade - 1];
+  if (kind === "event") return { backgroundColor: `${color}1f`, borderColor: color, color: palette.shades[4] };
+  const darkText = shade <= 2 || (colors[category] === "yellow" && shade === 3);
+  return { backgroundColor: color, color: darkText ? "#0f172a" : "#ffffff" };
 }

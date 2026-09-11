@@ -16,10 +16,8 @@
     "verify-ical-sync": "node --import tsx scripts/verify-ical-sync.ts",
     "verify-google-import": "node --import tsx scripts/verify-google-import.ts",
     "verify-cloud-sync": "node --import tsx scripts/verify-cloud-sync.ts",
+    "verify-category-colors": "node --import tsx scripts/verify-category-colors.ts",
     "verify-class-foundation": "node --import tsx scripts/verify-class-foundation.ts",
-    "verify-class-detection": "node --import tsx scripts/verify-class-detection.ts",
-    "verify-class-management": "node --import tsx scripts/verify-class-management.ts",
-    "verify-class-rendering": "node --import tsx scripts/verify-class-rendering.ts",
     "verify-stage6": "node --import tsx scripts/verify-stage6.ts",
     "verify-backup": "node --import tsx scripts/verify-backup.ts",
     "verify-release": "node --env-file=.env.local --import tsx scripts/verify-release-readiness.ts"
